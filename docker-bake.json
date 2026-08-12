@@ -1,10 +1,10 @@
 {
   "group": {
     "default": {
-      "targets": ["aws", "standard"]
+      "targets": ["aws", "standard", "vertex"]
     },
     "all": {
-      "targets": ["aws", "standard", "standalone"]
+      "targets": ["aws", "standard", "standalone", "vertex"]
     }
   },
   "target": {
@@ -29,6 +29,12 @@
       "dockerfile": "Dockerfile.standalone",
       "target": "standalone",
       "tags": ["redislabs/agent-memory-server:${REDIS_AGENT_MEMORY_VERSION:-latest}-standalone"]
+    },
+    "vertex": {
+      "inherits": ["common"],
+      "dockerfile": "Dockerfile",
+      "target": "vertex",
+      "tags": ["redislabs/agent-memory-server-vertex:${REDIS_AGENT_MEMORY_VERTEX_VERSION:-latest}"]
     }
   }
 }

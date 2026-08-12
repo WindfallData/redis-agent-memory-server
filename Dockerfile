@@ -67,6 +67,30 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --no-deps .
 
 # ============================================
+# BUILDER VERTEX - Compile Vertex AI deps
+# ============================================
+FROM builder-base AS builder-vertex
+
+# Create virtual environment explicitly
+RUN uv venv .venv
+
+# Copy dependency files first for better layer caching
+COPY pyproject.toml uv.lock ./
+COPY agent-memory-client ./agent-memory-client
+
+# Install dependencies into the venv (without the project)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    VIRTUAL_ENV=/app/.venv uv sync --frozen --no-install-project --no-dev --extra vertex
+
+# Copy source code
+COPY . /app
+
+# Install the project itself
+RUN --mount=type=cache,target=/root/.cache/uv \
+    . .venv/bin/activate && \
+    uv pip install --no-deps .
+
+# ============================================
 # RUNTIME BASE - Slim image without build tools
 # ============================================
 FROM python:3.12-slim-bookworm AS runtime-base
@@ -150,4 +174,38 @@ ENV DISABLE_AUTH=false
 #   Development: docker run -p 8000:8000 redislabs/agent-memory-server:aws agent-memory api --host 0.0.0.0 --port 8000 --task-backend=asyncio
 #   Production API: docker run -p 8000:8000 redislabs/agent-memory-server:aws agent-memory api --host 0.0.0.0 --port 8000
 #   Production Worker: docker run redislabs/agent-memory-server:aws agent-memory task-worker --concurrency 10
+CMD ["agent-memory", "api", "--host", "0.0.0.0", "--port", "8000"]
+
+# ============================================
+# VERTEX VARIANT - Includes Google Vertex AI support
+# ============================================
+FROM runtime-base AS vertex
+
+# Copy the virtual environment and app from builder
+COPY --chown=agentmemory:agentmemory --from=builder-vertex /app /app
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Switch to non-root user
+USER agentmemory
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/v1/health || exit 1
+
+# Enable authentication by default.
+# You may override with DISABLE_AUTH=true in development.
+ENV DISABLE_AUTH=false
+
+# Default to development mode using the API's default backend (Docket). For
+# single-process development without a worker, add `--task-backend=asyncio` to
+# the api command.
+#
+# Auth is GOOGLE_APPLICATION_CREDENTIALS, or relies on the metadata server / Workload Identity.
+#
+# Examples:
+#   Development: docker run -p 8000:8000 redislabs/agent-memory-server:vertex agent-memory api --host 0.0.0.0 --port 8000 --task-backend=asyncio
+#   Production API: docker run -p 8000:8000 redislabs/agent-memory-server:vertex agent-memory api --host 0.0.0.0 --port 8000
+#   Production Worker: docker run redislabs/agent-memory-server:vertex agent-memory task-worker --concurrency 10
 CMD ["agent-memory", "api", "--host", "0.0.0.0", "--port", "8000"]
