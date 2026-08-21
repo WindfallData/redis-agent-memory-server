@@ -247,6 +247,24 @@ Returns:
 
 ---
 
+### POST `/v1/long-term-memory/list`
+
+**List Long Term Memory**
+
+List long-term memories matching filters, without relevance ranking.
+
+Args:
+    payload: Filters, plus `limit` and `offset` for paging
+
+Returns:
+    A page of matching memories, plus `total` and `next_offset` for paging
+
+**Request Body:** [`ListRequest`](#data-models)
+
+**Response:** [`MemoryRecordResultsResponse`](#data-models)
+
+---
+
 ### DELETE `/v1/long-term-memory`
 
 **Delete Long Term Memory**
@@ -655,6 +673,28 @@ Payload for long-term memory search
 | `recency_half_life_last_access_days` | number \| null | No | Half-life (days) for last_accessed decay |
 | `recency_half_life_created_days` | number \| null | No | Half-life (days) for created_at decay |
 | `server_side_recency` | boolean \| null | No | If true, attempt server-side recency-aware re-ranking when s |
+
+### ListRequest
+
+Payload for long-term memory listing.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `session_id` | SessionId \| null | No | Optional session ID to filter by |
+| `namespace` | Namespace \| null | No | Optional namespace to filter by |
+| `topics` | Topics \| null | No | Optional topics to filter by |
+| `entities` | Entities \| null | No | Optional entities to filter by |
+| `user_id` | UserId \| null | No | Optional user ID to filter by |
+| `created_at` | CreatedAt \| null | No | Optional created at timestamp to filter by |
+| `last_accessed` | LastAccessed \| null | No | Optional last accessed timestamp to filter by |
+| `memory_type` | MemoryType \| null | No | Optional memory type to filter by |
+| `extraction_strategy` | ExtractionStrategy \| null | No | Optional extraction strategy to filter by |
+| `event_date` | EventDate \| null | No | Optional event date to filter by (for episodic memories) |
+| `memory_hash` | MemoryHash \| null | No | Optional memory hash to filter by |
+| `id` | Id \| null | No | Optional memory ID to filter by. Accepts multiple values, so this doubles as a batch fetch of known ids |
+| `discrete_memory_extracted` | DiscreteMemoryExtracted \| null | No | Optional discrete memory extracted flag to filter by |
+| `limit` | integer | No | Maximum number of records to return in this page (1-100, default 10) |
+| `offset` | integer | No | Offset of the first record to return |
 
 ### MemoryPromptRequest
 

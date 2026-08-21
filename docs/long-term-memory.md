@@ -120,8 +120,48 @@ memories = [
 # Create long-term memories
 POST /v1/long-term-memory/
 
-# Search long-term memories
+# Search long-term memories (ranked retrieval)
 POST /v1/long-term-memory/search
+
+# List long-term memories (filter-only enumeration)
+POST /v1/long-term-memory/list
+```
+
+## Search vs. List
+
+`search` is **retrieval for a model**: it embeds your query text, ranks by relevance, can relax filters to preserve recall,
+applies recency re-ranking, and records that the returned memories were accessed.
+
+`list` is **enumeration for a caller**: it applies your filters and returns what matches, in a stable order, and touches nothing.
+
+| | `search` | `list` |
+|---|---|---|
+| Query text | Required for ranking | Not accepted |
+| Embedding | Yes | No |
+| Ordering | By relevance, then recency re-rank | By id (ULID), i.e. creation order |
+| Order stable across calls | No | Yes |
+| `total` | Page-window count | Count of all matches |
+| Updates `last_accessed` / `access_count` | Yes | No |
+
+### Listing
+
+```json
+{
+  "namespace": {"eq": "user_123"},
+  "memory_type": {"eq": "semantic"},
+  "limit": 50,
+  "offset": 0
+}
+```
+
+Page by following `next_offset` until it comes back null:
+
+```json
+{
+  "memories": ["..."],
+  "total": 137,
+  "next_offset": 50
+}
 ```
 
 ## Search Capabilities
