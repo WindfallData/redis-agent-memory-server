@@ -14,10 +14,13 @@ from ulid import ULID
 
 from agent_memory_server.filters import (
     CreatedAt,
+    DiscreteMemoryExtracted,
     Entities,
     EventDate,
     ExtractionStrategy,
+    Id,
     LastAccessed,
+    MemoryHash,
     MemoryType,
     Namespace,
     SessionId,

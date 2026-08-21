@@ -1572,11 +1572,6 @@ async def list_long_term_memories(
           - `total` is the number of records matched,
           - `next_offset` is the offset of the next page, or None on the last page.
     """
-    if namespace is None:
-        raise ValueError(
-            "namespace is required for listing memories."
-        )
-
     db = await get_memory_vector_db()
 
     return await db.list_memories(
