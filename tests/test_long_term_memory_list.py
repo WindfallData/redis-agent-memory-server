@@ -87,12 +87,8 @@ async def test_listing_is_deterministic_across_identical_calls(listing_db):
     user_id = f"user-{ULID()}"
     await _seed(listing_db, namespace, user_id, 12)
 
-    first = await list_long_term_memories(
-        namespace=Namespace(eq=namespace), limit=12
-    )
-    second = await list_long_term_memories(
-        namespace=Namespace(eq=namespace), limit=12
-    )
+    first = await list_long_term_memories(namespace=Namespace(eq=namespace), limit=12)
+    second = await list_long_term_memories(namespace=Namespace(eq=namespace), limit=12)
 
     assert [m.id for m in first.memories] == [m.id for m in second.memories]
     assert len(first.memories) == 12
@@ -105,9 +101,7 @@ async def test_listing_is_ordered_by_creation(listing_db):
     user_id = f"user-{ULID()}"
     seeded = await _seed(listing_db, namespace, user_id, 10)
 
-    results = await list_long_term_memories(
-        namespace=Namespace(eq=namespace), limit=10
-    )
+    results = await list_long_term_memories(namespace=Namespace(eq=namespace), limit=10)
 
     assert [m.id for m in results.memories] == [r.id for r in seeded]
 
@@ -161,9 +155,7 @@ async def test_total_is_corpus_count_not_page_window(listing_db):
     user_id = f"user-{ULID()}"
     await _seed(listing_db, namespace, user_id, 15)
 
-    page = await list_long_term_memories(
-        namespace=Namespace(eq=namespace), limit=2
-    )
+    page = await list_long_term_memories(namespace=Namespace(eq=namespace), limit=2)
 
     assert page.total == 15
     assert len(page.memories) == 2
@@ -171,7 +163,9 @@ async def test_total_is_corpus_count_not_page_window(listing_db):
 
 
 @pytest.mark.asyncio
-async def test_listing_does_not_touch_access_tracking(listing_db, use_test_redis_connection):
+async def test_listing_does_not_touch_access_tracking(
+    listing_db, use_test_redis_connection
+):
     """Listing must not record "someone looked at a list containing this."""
     namespace = f"ns-{ULID()}"
     user_id = f"user-{ULID()}"
@@ -272,9 +266,7 @@ async def test_list_endpoint_rejects_out_of_range_limit(listing_db):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(
-            "/v1/long-term-memory/list", json={"limit": 500}
-        )
+        response = await client.post("/v1/long-term-memory/list", json={"limit": 500})
 
     assert response.status_code == 422
 

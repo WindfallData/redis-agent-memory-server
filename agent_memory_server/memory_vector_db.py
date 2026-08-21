@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 # RediSearch SORTBY takes a single field, so we can't break ties and ordering is arbitrary in that case.
 LIST_SORT_FIELDS: dict[str, str] = {"id": "id_"}
 
+
 class _PhraseAwareQueryMixin:
     _QUOTED_FRAGMENT_PATTERN = re.compile(r'"([^"]+)"|(\S+)')
 
