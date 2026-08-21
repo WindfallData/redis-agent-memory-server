@@ -20,6 +20,7 @@ from agent_memory_server.models import (
     CreateSummaryViewRequest,
     EditMemoryRecordRequest,
     GetSessionsQuery,
+    ListRequest,
     MemoryMessage,
     MemoryPromptRequest,
     MemoryPromptResponse,
@@ -846,6 +847,36 @@ async def search_long_term_memory(
         return raw_results
     except Exception:
         return raw_results
+
+
+@router.post("/v1/long-term-memory/list", response_model=MemoryRecordResultsResponse)
+async def list_long_term_memory(
+    payload: ListRequest,
+    current_user: UserInfo = Depends(get_current_user),
+):
+    """
+    List long-term memories matching filters, without relevance ranking.
+
+    Args:
+        payload: Filters, plus `limit` and `offset` for paging
+
+    Returns:
+        A page of matching memories.
+          - `total` is the number of records matching the filters across the whole corpus
+          - `next_offset` is the offset to request for the following page; null on the last page.
+    """
+    if not settings.long_term_memory:
+        raise HTTPException(status_code=400, detail="Long-term memory is disabled")
+
+    filters = payload.get_filters()
+
+    logger.debug(f"Long-term list filters: {filters}")
+
+    return await long_term_memory.list_long_term_memories(
+        limit=payload.limit,
+        offset=payload.offset,
+        **filters,
+    )
 
 
 @router.delete("/v1/long-term-memory", response_model=AckResponse)
