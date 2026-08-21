@@ -59,6 +59,16 @@ _tiktoken_encoding: Any | None = None
 _tiktoken_encoding_last_failed_at: float | None = None
 _TIKTOKEN_ENCODING_RETRY_INTERVAL_SECONDS = 300
 
+# when a search returs nothing, these filter keys can be dropped before trying again;
+# free-text hints are embedded in the second search, but the explicit filters are removed.
+_RELAXABLE_FILTER_KEYS = (
+    "topics",
+    "entities",
+    "memory_type",
+    "extraction_strategy",
+    "event_date",
+)
+
 router = APIRouter()
 
 
@@ -748,19 +758,11 @@ async def search_long_term_memory(
 
     raw_results = await long_term_memory.search_long_term_memories(**kwargs)
 
-    # Soft-filter fallback: if strict filters yield no results, relax filters and
-    # inject hints into the query text to guide semantic search.
+    # Soft-filter fallback: if strict filters yield no results, relax the relevance filters,
+    # inject hints into the query text, and then try again.
     try:
         had_any_strict_filters = any(
-            key in kwargs and kwargs[key] is not None
-            for key in (
-                "topics",
-                "entities",
-                "namespace",
-                "memory_type",
-                "extraction_strategy",
-                "event_date",
-            )
+            key in kwargs and kwargs[key] is not None for key in _RELAXABLE_FILTER_KEYS
         )
         if (
             raw_results.total == 0
@@ -769,14 +771,7 @@ async def search_long_term_memory(
             == SearchModeEnum.SEMANTIC
         ):
             fallback_kwargs = dict(kwargs)
-            for key in (
-                "topics",
-                "entities",
-                "namespace",
-                "memory_type",
-                "extraction_strategy",
-                "event_date",
-            ):
+            for key in _RELAXABLE_FILTER_KEYS:
                 fallback_kwargs.pop(key, None)
 
             def _vals(f):
@@ -793,7 +788,6 @@ async def search_long_term_memory(
 
             topics_vals = _vals(filters.get("topics")) if filters else []
             entities_vals = _vals(filters.get("entities")) if filters else []
-            namespace_vals = _vals(filters.get("namespace")) if filters else []
             memory_type_vals = _vals(filters.get("memory_type")) if filters else []
             extraction_strategy_vals = (
                 _vals(filters.get("extraction_strategy")) if filters else []
@@ -804,10 +798,6 @@ async def search_long_term_memory(
                 hint_parts.append(f"topics: {', '.join(sorted(set(topics_vals)))}")
             if entities_vals:
                 hint_parts.append(f"entities: {', '.join(sorted(set(entities_vals)))}")
-            if namespace_vals:
-                hint_parts.append(
-                    f"namespace: {', '.join(sorted(set(namespace_vals)))}"
-                )
             if memory_type_vals:
                 hint_parts.append(f"type: {', '.join(sorted(set(memory_type_vals)))}")
             if extraction_strategy_vals:
