@@ -637,6 +637,187 @@ class LongTermMemoryServiceTest {
         assertTrue(requestBody.contains("\"extraction_strategy\":{\"eq\":\"summary\"}"));
     }
 
+    @Test
+    void testListLongTermMemories() throws Exception {
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"memories\":[{\"id\":\"01HX\",\"text\":\"first\",\"dist\":0.0}],"
+                        + "\"total\":42,\"next_offset\":1}"));
+
+        ListRequest request = ListRequest.builder()
+                .namespace("test-namespace")
+                .limit(1)
+                .build();
+
+        MemoryRecordResults results = client.longTermMemory().listLongTermMemories(request);
+
+        assertNotNull(results);
+        assertEquals(1, results.getMemories().size());
+        assertEquals("01HX", results.getMemories().get(0).getId());
+        // total counts the whole corpus, not the returned page
+        assertEquals(42, results.getTotal());
+        assertEquals(Integer.valueOf(1), results.getNextOffset());
+
+        RecordedRequest recorded = mockServer.takeRequest();
+        assertEquals("POST", recorded.getMethod());
+        assertNotNull(recorded.getPath());
+        assertTrue(recorded.getPath().contains("/v1/long-term-memory/list"));
+
+        String body = recorded.getBody().readUtf8();
+        assertTrue(body.contains("\"namespace\":{\"eq\":\"test-namespace\"}"));
+        assertTrue(body.contains("\"limit\":1"));
+        assertTrue(body.contains("\"offset\":0"));
+    }
+
+    @Test
+    void testListLongTermMemories_NullNextOffsetOnLastPage() throws Exception {
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"memories\":[],\"total\":0,\"next_offset\":null}"));
+
+        MemoryRecordResults results = client.longTermMemory()
+                .listLongTermMemories(ListRequest.builder().build());
+
+        assertNotNull(results);
+        assertTrue(results.getMemories().isEmpty());
+        assertNull(results.getNextOffset());
+    }
+
+    @Test
+    void testListLongTermMemories_SendsNoSearchOnlyFields() throws Exception {
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(objectMapper.writeValueAsString(emptyResults())));
+
+        client.longTermMemory().listLongTermMemories(ListRequest.builder().build());
+
+        String body = mockServer.takeRequest().getBody().readUtf8();
+        // Listing is filter-only: nothing about text, ranking or recency belongs
+        // on the wire, or the server would reject the payload.
+        assertFalse(body.contains("\"text\""));
+        assertFalse(body.contains("search_mode"));
+        assertFalse(body.contains("distance_threshold"));
+        assertFalse(body.contains("recency"));
+    }
+
+    @Test
+    void testListLongTermMemories_BatchFetchByIds() throws Exception {
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(objectMapper.writeValueAsString(emptyResults())));
+
+        ListRequest request = ListRequest.builder()
+                .ids(List.of("01HX", "01HY"))
+                .build();
+
+        client.longTermMemory().listLongTermMemories(request);
+
+        String body = mockServer.takeRequest().getBody().readUtf8();
+        assertTrue(body.contains("\"id\":{\"any\":[\"01HX\",\"01HY\"]}"));
+    }
+
+    @Test
+    void testListLongTermMemories_WithPaging() throws Exception {
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(objectMapper.writeValueAsString(emptyResults())));
+
+        ListRequest request = ListRequest.builder()
+                .userId("user-123")
+                .limit(25)
+                .offset(50)
+                .build();
+
+        client.longTermMemory().listLongTermMemories(request);
+
+        String body = mockServer.takeRequest().getBody().readUtf8();
+        assertTrue(body.contains("\"user_id\":{\"eq\":\"user-123\"}"));
+        assertTrue(body.contains("\"limit\":25"));
+        assertTrue(body.contains("\"offset\":50"));
+    }
+
+    @Test
+    void testListLongTermMemories_AppliesDefaultNamespace() throws Exception {
+        MemoryAPIClient namespacedClient = MemoryAPIClient.builder(mockServer.url("/").toString())
+                .timeout(5.0)
+                .defaultNamespace("default-ns")
+                .build();
+        try {
+            mockServer.enqueue(new MockResponse()
+                    .setResponseCode(200)
+                    .setHeader("Content-Type", "application/json")
+                    .setBody(objectMapper.writeValueAsString(emptyResults())));
+
+            namespacedClient.longTermMemory().listLongTermMemories(ListRequest.builder().build());
+
+            String body = mockServer.takeRequest().getBody().readUtf8();
+            assertTrue(body.contains("\"namespace\":{\"eq\":\"default-ns\"}"));
+        } finally {
+            namespacedClient.close();
+        }
+    }
+
+    @Test
+    void testListLongTermMemories_ExplicitNamespaceBeatsDefault() throws Exception {
+        MemoryAPIClient namespacedClient = MemoryAPIClient.builder(mockServer.url("/").toString())
+                .timeout(5.0)
+                .defaultNamespace("default-ns")
+                .build();
+        try {
+            mockServer.enqueue(new MockResponse()
+                    .setResponseCode(200)
+                    .setHeader("Content-Type", "application/json")
+                    .setBody(objectMapper.writeValueAsString(emptyResults())));
+
+            namespacedClient.longTermMemory().listLongTermMemories(
+                    ListRequest.builder().namespace("explicit-ns").build());
+
+            String body = mockServer.takeRequest().getBody().readUtf8();
+            assertTrue(body.contains("\"namespace\":{\"eq\":\"explicit-ns\"}"));
+            assertFalse(body.contains("default-ns"));
+        } finally {
+            namespacedClient.close();
+        }
+    }
+
+    @Test
+    void testListRequestBuilder_Defaults() {
+        ListRequest request = ListRequest.builder().build();
+
+        assertEquals(10, request.getLimit());
+        assertEquals(0, request.getOffset());
+        assertNull(request.getNamespace());
+        assertNull(request.getId());
+    }
+
+    @Test
+    void testListRequestBuilder_TagFilterOverloads() {
+        ListRequest request = ListRequest.builder()
+                .topics(TagFilter.all(List.of("a", "b")))
+                .memoryType("semantic")
+                .discreteMemoryExtracted("t")
+                .build();
+
+        assertNotNull(request.getTopics());
+        assertEquals(List.of("a", "b"), request.getTopics().getAll());
+        assertEquals("semantic", request.getMemoryType().getEq());
+        assertEquals("t", request.getDiscreteMemoryExtracted().getEq());
+    }
+
+    @Test
+    void testListRequestBuilder_EmptyTopicsListOmitted() {
+        ListRequest request = ListRequest.builder()
+                .topics(new ArrayList<>())
+                .build();
+
+        assertNull(request.getTopics());
+    }
+
     private MemoryRecordResults emptyResults() {
         MemoryRecordResults r = new MemoryRecordResults();
         r.setMemories(new ArrayList<>());
