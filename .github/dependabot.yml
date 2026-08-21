@@ -60,7 +60,7 @@ updates:
     commit-message:
       prefix: docker
     ignore:
-      # pyproject pins requires-python to >=3.12,<3.13; _explictly_ don't include python updates
+      # pyproject pins requires-python to >=3.12,<3.13; _explicitly_ don't include python updates
       - dependency-name: python
         update-types:
           - version-update:semver-major
