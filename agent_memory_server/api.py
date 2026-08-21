@@ -59,7 +59,7 @@ _tiktoken_encoding: Any | None = None
 _tiktoken_encoding_last_failed_at: float | None = None
 _TIKTOKEN_ENCODING_RETRY_INTERVAL_SECONDS = 300
 
-# when a search returs nothing, these filter keys can be dropped before trying again;
+# when a search returns nothing, these filter keys can be dropped before trying again;
 # free-text hints are embedded in the second search, but the explicit filters are removed.
 _RELAXABLE_FILTER_KEYS = (
     "topics",
