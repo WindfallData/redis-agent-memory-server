@@ -53,6 +53,10 @@ from agent_memory_server.utils.tag_codec import decode_tag_values, encode_tag_va
 logger = logging.getLogger(__name__)
 
 
+# record field -> index field for `list_memories(sort_by=...)`.
+# RediSearch SORTBY takes a single field, so we can't break ties and ordering is arbitrary in that case.
+LIST_SORT_FIELDS: dict[str, str] = {"id": "id_"}
+
 class _PhraseAwareQueryMixin:
     _QUOTED_FRAGMENT_PATTERN = re.compile(r'"([^"]+)"|(\S+)')
 
@@ -278,6 +282,8 @@ class MemoryVectorDatabase(ABC):
         discrete_memory_extracted: DiscreteMemoryExtracted | None = None,
         limit: int = 10,
         offset: int = 0,
+        sort_by: str | None = None,
+        ascending: bool = True,
     ) -> MemoryRecordResults:
         """List memories matching the given filters without semantic search.
 
@@ -301,9 +307,13 @@ class MemoryVectorDatabase(ABC):
             discrete_memory_extracted: Optional discrete memory extracted filter
             limit: Maximum number of results
             offset: Offset for pagination
+            sort_by: Optional record field to order results by, one of `LIST_SORT_FIELDS`
+            ascending: Sort direction, only meaningful alongside `sort_by`
 
         Returns:
-            MemoryRecordResults containing matching memories
+            MemoryRecordResults
+              - `total` is the number of records matched,
+              - `next_offset` is the offset of the next page, or None on the last page.
         """
         pass
 
@@ -1051,11 +1061,12 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
     ) -> int:
         """Count memories using a filter-only query."""
         try:
+            # `total` counts every match, so we only need to actually pull one
             results = await self.list_memories(
                 namespace=Namespace(eq=namespace) if namespace else None,
                 user_id=UserId(eq=user_id) if user_id else None,
                 session_id=SessionId(eq=session_id) if session_id else None,
-                limit=10000,  # Large number to get all results
+                limit=1,
             )
             return results.total
         except Exception as e:
@@ -1079,12 +1090,20 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
         discrete_memory_extracted: DiscreteMemoryExtracted | None = None,
         limit: int = 10,
         offset: int = 0,
+        sort_by: str | None = None,
+        ascending: bool = True,
     ) -> MemoryRecordResults:
         """List memories using filters without semantic search.
 
         Uses RedisVL FilterQuery for metadata-only filtering without requiring
         an embedding.
         """
+        if sort_by is not None and sort_by not in LIST_SORT_FIELDS:
+            raise ValueError(
+                f"Cannot sort by {sort_by!r}; expected one of "
+                f"{sorted(LIST_SORT_FIELDS)}"
+            )
+
         await self._ensure_index()
 
         try:
@@ -1109,31 +1128,41 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
             filter_query = FilterQuery(
                 filter_expression=redis_filter,
                 return_fields=self.RETURN_FIELDS,
-                num_results=limit + offset,
+                num_results=limit,
             )
+            if sort_by is not None:
+                filter_query.sort_by(LIST_SORT_FIELDS[sort_by], asc=ascending)
+            filter_query.paging(offset, limit)
 
-            # Execute query using index.query() which properly handles params
-            results = await self._index.query(filter_query)
+            # search() not query() to keep the raw Result:
+            # query() throws away the `total` count
+            raw_results = await self._index.search(
+                filter_query.query, query_params=filter_query.params
+            )
+            total = raw_results.total
 
-            # Parse results (query() returns List[Dict[str, Any]])
-            memory_results: list[MemoryRecordResult] = []
-            for fields in results[offset:]:
-                memory_result = self._data_to_memory_result(
+            # unpack documents a la RedisVL's query()
+            results = [
+                {k: v for k, v in doc.__dict__.items() if k != "payload"}
+                for doc in raw_results.docs
+            ]
+
+            memory_results: list[MemoryRecordResult] = [
+                self._data_to_memory_result(
                     fields,
                     dist=0.0,
                     score=None,
                     score_type=None,
                 )
-                memory_results.append(memory_result)
+                for fields in results[:limit]
+            ]
 
-                if len(memory_results) >= limit:
-                    break
-
-            next_offset = offset + limit if len(results) > offset + limit else None
+            consumed = offset + len(memory_results)
+            next_offset = consumed if consumed < total else None
 
             return MemoryRecordResults(
-                memories=memory_results[:limit],
-                total=len(results),
+                memories=memory_results,
+                total=total,
                 next_offset=next_offset,
             )
 
