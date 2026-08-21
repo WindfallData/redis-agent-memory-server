@@ -9,6 +9,10 @@ A memory layer for AI agents.
 
 </div>
 
+## Forked by Windfall
+
+Upstream moved `main` to a `v0` "research" project.
+
 ## Features
 - **Dual Interface**: REST API and Model Context Protocol (MCP) server
 - **Two-Tier Memory**: Working memory (session-scoped) and long-term memory (persistent)
@@ -302,10 +306,13 @@ docker compose up api task-worker redis mcp    # Production-like mode
 ```
 
 `make verify` requires `OPENAI_API_KEY` because it runs `make test-api`.
+
 ## License
 
+Prior to commit fbf9464c8a31749c456b3c21f6f801f827101d66:
+Copyright (c) 2025 Redis, Inc.
+
+After that commit:
+Copyright (c) 2026 Windfall Data, Inc.
+
 Apache License 2.0 - see [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-We welcome contributions! Please see the [development documentation](docs/development.md) for guidelines.

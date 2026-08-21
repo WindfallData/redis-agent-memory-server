@@ -1,0 +1,111 @@
+name: Tests
+
+# `windfall` is the default branch for this fork
+# main matches upstream at the time of forking
+
+on:
+  pull_request:
+    branches: [windfall]
+  push:
+    branches: [windfall]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # pyproject.toml pins requires-python to >=3.12,<3.13
+  PYTHON_VERSION: '3.12'
+  # build.gradle.kts pins source/targetCompatibility to 21
+  JAVA_VERSION: '21'
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Cache pre-commit hooks
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Install uv
+        run: |
+          python -m pip install --upgrade pip
+          pip install uv
+
+      - name: Run pre-commit
+        # see ./.pre-commit-config.toml
+        # ruff, lint, formatting
+        run: make pre-commit
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    env:
+      REDIS_IMAGE: redis:8.6
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install uv
+          make sync
+
+      - name: Verify Docker is available
+        run: docker info
+
+      - name: Run tests
+        # excludes tests market `requires_api_keys`, which are upstream integration tests
+        run: make test
+
+      # requires `OPENAI_API_KEY`, which we're not giving it atm
+      # - name: Run API integration tests
+      #   run: make test-api
+
+  test-java:
+    name: Tests (Java client)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-memory-client/agent-memory-client-java
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the axion-release plugin needs history and tags; no shallow
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run tests
+        run: ./gradlew test
+
+      # test only, no build:
+      # downstream users currently bring this in as git submodule and own builds themselves

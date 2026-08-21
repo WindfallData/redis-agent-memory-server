@@ -1003,6 +1003,106 @@ class TestSearchEndpoint:
         assert mock_search.call_args.kwargs["text"] == "scarlet dolphin"
 
 
+class TestSoftFilterFallbackNamespaceIsolation:
+    """`namespace` is a tenant boundary and must survive the soft-filter fallback.
+
+    Regression coverage for APP-1429: the fallback used to strip `namespace`
+    along with the relevance filters, so a zero-hit search in one tenant's
+    namespace could return another tenant's records — especially for
+    account-scope memories, which share the sentinel `user_id="__account__"`
+    across every tenant.
+    """
+
+    @staticmethod
+    def _memory(memory_id: str, namespace: str, text: str):
+        from agent_memory_server.models import MemoryRecord
+
+        return MemoryRecord(
+            id=memory_id,
+            text=text,
+            namespace=namespace,
+            user_id="__account__",
+        )
+
+    @pytest.mark.parametrize("query_text", ["quarterly revenue", ""])
+    @pytest.mark.asyncio
+    async def test_fallback_never_crosses_namespaces(
+        self, client, mock_memory_vector_db, query_text
+    ):
+        """A namespace-A search returns nothing rather than namespace-B records."""
+        other_tenant = self._memory(
+            "other-tenant-1", "tenant-b", "quarterly revenue was $4.2M"
+        )
+        mock_memory_vector_db.memories[other_tenant.id] = other_tenant
+
+        response = await client.post(
+            "/v1/long-term-memory/search",
+            json={
+                "text": query_text,
+                "namespace": {"eq": "tenant-a"},
+                "user_id": {"eq": "__account__"},
+                # A relaxable filter, so the fallback engages.
+                "topics": {"eq": "finance"},
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["total"] == 0
+        assert data["memories"] == []
+
+    @patch("agent_memory_server.api.long_term_memory.search_long_term_memories")
+    @pytest.mark.asyncio
+    async def test_fallback_keeps_namespace_filter_and_drops_namespace_hint(
+        self, mock_search, client
+    ):
+        """The relaxed re-query keeps the namespace filter out of the query text."""
+        from agent_memory_server.models import MemoryRecordResults
+
+        mock_search.return_value = MemoryRecordResults(
+            memories=[], total=0, next_offset=None
+        )
+
+        response = await client.post(
+            "/v1/long-term-memory/search",
+            json={
+                "text": "scarlet dolphin",
+                "namespace": {"eq": "tenant-a"},
+                "topics": {"eq": "marine biology"},
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert mock_search.call_count == 2
+
+        fallback_kwargs = mock_search.call_args_list[1].kwargs
+        assert fallback_kwargs["namespace"].eq == "tenant-a"
+        assert fallback_kwargs.get("topics") is None
+        # A tenant identifier is not a relevance signal.
+        assert "tenant-a" not in fallback_kwargs["text"]
+        assert "namespace" not in fallback_kwargs["text"]
+
+    @patch("agent_memory_server.api.long_term_memory.search_long_term_memories")
+    @pytest.mark.asyncio
+    async def test_namespace_only_filter_does_not_trigger_fallback(
+        self, mock_search, client
+    ):
+        """Nothing is relaxable, so an empty result set is final — no re-query."""
+        from agent_memory_server.models import MemoryRecordResults
+
+        mock_search.return_value = MemoryRecordResults(
+            memories=[], total=0, next_offset=None
+        )
+
+        response = await client.post(
+            "/v1/long-term-memory/search",
+            json={"text": "scarlet dolphin", "namespace": {"eq": "tenant-a"}},
+        )
+
+        assert response.status_code == 200, response.text
+        mock_search.assert_called_once()
+
+
 @pytest.mark.requires_api_keys
 class TestMemoryPromptEndpoint:
     @patch("agent_memory_server.api.working_memory.get_working_memory")
