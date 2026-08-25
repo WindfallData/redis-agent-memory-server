@@ -1073,7 +1073,7 @@ class EditMemoryRecordRequest(BaseModel):
     )
     extracted_from: list[str] | None = Field(
         default=None,
-        description="Updated source handles this memory was extracted from"
+        description="Updated source handles this memory was extracted from",
     )
 
     @field_validator("topics", "entities", "extracted_from", mode="after")

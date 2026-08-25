@@ -1138,13 +1138,12 @@ async def compact_long_term_memories(
                             }
 
                             # find duplicates for deletion
-                            memories_to_delete =
-                                if pinned_keys:
-                                    # keeping the pinned docs that would merge in
-                                    [key for key, _ in docs if key not in pinned_keys]
-                                else:
-                                    # keeping the newest doc if none were pinned
-                                    memories_to_delete = [key for key, _ in docs[:-1]]
+                            # keeping the pinned docs that would merge in, or the newest doc if none were pinned
+                            memories_to_delete = (
+                                [key for key, _ in docs if key not in pinned_keys]
+                                if pinned_keys
+                                else [key for key, _ in docs[:-1]]
+                            )
 
                             # and remove them
                             if memories_to_delete:
