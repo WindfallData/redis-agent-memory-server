@@ -25,12 +25,14 @@ from agent_memory_server.filters import (
     DiscreteMemoryExtracted,
     Entities,
     EventDate,
+    ExtractedFrom,
     ExtractionStrategy,
     Id,
     LastAccessed,
     MemoryHash,
     MemoryType,
     Namespace,
+    Pinned,
     SessionId,
     Topics,
     UserId,
@@ -63,6 +65,43 @@ from agent_memory_server.utils.tag_codec import encode_tag_values, sanitize_tag_
 _pending_extraction_tasks: set = set()
 SEMANTIC_DEDUP_SEARCH_LIMIT = 10
 SEMANTIC_DEDUP_QUERY_LIMIT = SEMANTIC_DEDUP_SEARCH_LIMIT + 1
+
+# Metadata fields that need to be kept on deduplication and campaction,
+# when an incoming record leaves the field empty/falsey
+_PRESERVED_ON_OVERWRITE = (
+    "pinned",
+    "metadata",
+    "extracted_from",
+    "event_date",
+    "access_count",
+)
+
+
+def _parse_ft_search_docs(reply: Any) -> list[tuple[str, dict[str, str]]]:
+    """Parse a RESP2 FT.SEARCH reply into (key, fields) pairs, in reply order.
+
+    The reply is [total, key, [field, value, ...], key, [field, value, ...], ...]
+    — two elements per document regardless of how many fields were requested.
+    """
+
+    def decode(value: Any) -> str:
+        return value.decode() if isinstance(value, bytes) else str(value)
+
+    docs: list[tuple[str, dict[str, str]]] = []
+    if not reply:
+        return docs
+
+    for i in range(1, len(reply) - 1, 2):
+        key, raw_fields = reply[i], reply[i + 1]
+        if key is None or not isinstance(raw_fields, list | tuple):
+            continue
+        fields = {
+            decode(raw_fields[j]): decode(raw_fields[j + 1])
+            for j in range(0, len(raw_fields) - 1, 2)
+        }
+        docs.append((decode(key), fields))
+
+    return docs
 
 
 def _parse_extraction_response_with_fallback(content: str, logger) -> dict:
@@ -809,14 +848,19 @@ async def merge_memories_with_llm(
     if len(memories) == 1:
         return memories[0]
 
+    # Ensure that merge/compaction respects ownership and tenant isolation
     user_ids = {memory.user_id for memory in memories if memory.user_id}
-
     if len(user_ids) > 1:
         raise ValueError("Cannot merge memories with different user IDs")
 
-        # Create a unified set of topics and entities
+    namespaces = {memory.namespace for memory in memories if memory.namespace}
+    if len(namespaces) > 1:
+        raise ValueError("Cannot merge memories with different namespaces")
+
+    # Create a unified set of topics, entities and source handles
     all_topics = set()
     all_entities = set()
+    all_extracted_from = set()
 
     for memory in memories:
         if memory.topics:
@@ -824,6 +868,9 @@ async def merge_memories_with_llm(
 
         if memory.entities:
             all_entities.update(memory.entities)
+
+        if memory.extracted_from:
+            all_extracted_from.update(memory.extracted_from)
 
     # Get the memory texts for LLM prompt
     memory_texts = [m.text for m in memories]
@@ -875,12 +922,43 @@ async def merge_memories_with_llm(
     last_accessed = max(coerce_to_float(m, "last_accessed") for m in memories)
 
     # Prefer non-empty namespace, user_id, session_id from memories
+    # namespace and user_id should match the original, per the check above
     namespace = next((m.namespace for m in memories if m.namespace), None)
     user_id = next((m.user_id for m in memories if m.user_id), None)
     session_id = next((m.session_id for m in memories if m.session_id), None)
 
     # Get the memory type from the first memory
     memory_type = next((m.memory_type for m in memories if m.memory_type), "semantic")
+
+    # Curation and provenance fields are carried forward:
+    # dropping them here could silently unpin and un-cite a record as a side effect of an unrelated write.
+    #
+    # merge metadata oldest-first so the newest record wins key collisions.
+    metadata: dict[str, Any] = {}
+    for m in sorted(memories, key=lambda m: coerce_to_float(m, "created_at")):
+        if m.metadata:
+            metadata.update(m.metadata)
+
+    pinned = any(m.pinned for m in memories)
+    access_count = sum(m.access_count or 0 for m in memories)
+
+    # Earliest non-null, matching the created_at convention above
+    event_dates = [m.event_date for m in memories if m.event_date]
+    event_date = min(event_dates) if event_dates else None
+    persisted_ats = [m.persisted_at for m in memories if m.persisted_at]
+    persisted_at = min(persisted_ats) if persisted_ats else None
+
+    # A mixed group has no single honest strategy, so take the record the merge
+    # started from either way, and say so when the group disagreed.
+    extraction_strategy = memories[0].extraction_strategy
+    extraction_strategy_config = memories[0].extraction_strategy_config
+    strategies = {m.extraction_strategy for m in memories}
+    if len(strategies) > 1:
+        logger.info(
+            "Merging memories with mixed extraction strategies %s; keeping %r",
+            sorted(strategies),
+            extraction_strategy,
+        )
 
     # Create the merged memory
     merged_memory = MemoryRecord(
@@ -896,6 +974,18 @@ async def merge_memories_with_llm(
         entities=sanitize_tag_values(list(all_entities)) if all_entities else None,
         memory_type=MemoryTypeEnum(memory_type),
         discrete_memory_extracted="t",
+        pinned=pinned,
+        metadata=metadata,
+        extracted_from=(
+            sanitize_tag_values(list(all_extracted_from))
+            if all_extracted_from
+            else None
+        ),
+        access_count=access_count,
+        event_date=event_date,
+        persisted_at=persisted_at,
+        extraction_strategy=extraction_strategy,
+        extraction_strategy_config=extraction_strategy_config,
     )
 
     # Generate a new hash for the merged memory
@@ -1026,44 +1116,37 @@ async def compact_long_term_memories(
                             index_name,
                             f"'{query_expr}'",
                             "RETURN",
-                            "6",
+                            "7",
                             "id_",
                             "text",
                             "last_accessed",
                             "created_at",
                             "user_id",
                             "session_id",
+                            "pinned",
                             "SORTBY",
                             "last_accessed",
                             "ASC",
                         )
 
-                        if search_results and search_results[0] > 1:
-                            num_duplicates = search_results[0]
+                        docs = _parse_ft_search_docs(search_results)
+                        if len(docs) > 1:
+                            pinned_keys = {
+                                key
+                                for key, fields in docs
+                                if fields.get("pinned") == "1"
+                            }
 
-                            # Keep the newest memory (last in sorted results)
-                            # and delete the rest
-                            memories_to_delete = []
+                            # find duplicates for deletion
+                            memories_to_delete =
+                                if pinned_keys:
+                                    # keeping the pinned docs that would merge in
+                                    [key for key, _ in docs if key not in pinned_keys]
+                                else:
+                                    # keeping the newest doc if none were pinned
+                                    memories_to_delete = [key for key, _ in docs[:-1]]
 
-                            # Each memory result has: key + 6 field-value pairs = 13 elements
-                            # Keys are at positions: 1, 14, 27, ... (1 + n * 13)
-                            elements_per_memory = 1 + 6 * 2  # key + 6 field-value pairs
-                            for n in range(num_duplicates):
-                                key_index = 1 + n * elements_per_memory
-                                # Skip the last item (newest) which we'll keep
-                                if n < num_duplicates - 1 and key_index < len(
-                                    search_results
-                                ):
-                                    key = search_results[key_index]
-                                    if key is not None:
-                                        key_str = (
-                                            key.decode()
-                                            if isinstance(key, bytes)
-                                            else key
-                                        )
-                                        memories_to_delete.append(key_str)
-
-                            # Delete older duplicates
+                            # and remove them
                             if memories_to_delete:
                                 pipeline = redis_client.pipeline()
                                 for key in memories_to_delete:
@@ -1147,19 +1230,11 @@ async def compact_long_term_memories(
                     if memory_id in processed_ids:
                         continue
 
-                    # Convert MemoryRecordResult to MemoryRecord for deduplication
+                    # Copy MemoryRecordResult into MemoryRecord for deduplication.
                     memory_obj = MemoryRecord(
-                        id=memory_result.id,
-                        text=memory_result.text,
-                        user_id=memory_result.user_id,
-                        session_id=memory_result.session_id,
-                        namespace=memory_result.namespace,
-                        created_at=memory_result.created_at,
-                        last_accessed=memory_result.last_accessed,
-                        topics=memory_result.topics or [],
-                        entities=memory_result.entities or [],
-                        memory_type=memory_result.memory_type,  # type: ignore
-                        discrete_memory_extracted=memory_result.discrete_memory_extracted,  # type: ignore
+                        **memory_result.model_dump(
+                            exclude={"dist", "score", "score_type"}
+                        )
                     )
 
                     # Add this memory to processed list BEFORE processing to prevent cycles
@@ -1368,6 +1443,8 @@ async def search_long_term_memories(
     memory_type: MemoryType | None = None,
     extraction_strategy: ExtractionStrategy | None = None,
     event_date: EventDate | None = None,
+    pinned: Pinned | None = None,
+    extracted_from: ExtractedFrom | None = None,
     memory_hash: MemoryHash | None = None,
     server_side_recency: bool | None = None,
     recency_params: dict | None = None,
@@ -1399,6 +1476,8 @@ async def search_long_term_memories(
         memory_type: Optional memory type filter
         extraction_strategy: Optional extraction strategy filter
         event_date: Optional event date filter
+        pinned: Optional pin state filter
+        extracted_from: Optional source handle filter
         memory_hash: Optional memory hash filter
         limit: Maximum number of results
         offset: Offset for pagination
@@ -1427,6 +1506,8 @@ async def search_long_term_memories(
             memory_type=memory_type,
             extraction_strategy=extraction_strategy,
             event_date=event_date,
+            pinned=pinned,
+            extracted_from=extracted_from,
             memory_hash=memory_hash,
             limit=limit,
             offset=offset,
@@ -1469,6 +1550,8 @@ async def search_long_term_memories(
         memory_type=memory_type,
         extraction_strategy=extraction_strategy,
         event_date=event_date,
+        pinned=pinned,
+        extracted_from=extracted_from,
         memory_hash=memory_hash,
         distance_threshold=distance_threshold,
         server_side_recency=server_side_recency,
@@ -1501,6 +1584,8 @@ async def search_long_term_memories(
                 memory_type=memory_type,
                 extraction_strategy=extraction_strategy,
                 event_date=event_date,
+                pinned=pinned,
+                extracted_from=extracted_from,
                 memory_hash=memory_hash,
                 distance_threshold=distance_threshold,
                 server_side_recency=server_side_recency,
@@ -1535,6 +1620,8 @@ async def list_long_term_memories(
     memory_type: MemoryType | None = None,
     extraction_strategy: ExtractionStrategy | None = None,
     event_date: EventDate | None = None,
+    pinned: Pinned | None = None,
+    extracted_from: ExtractedFrom | None = None,
     memory_hash: MemoryHash | None = None,
     id: Id | None = None,
     discrete_memory_extracted: DiscreteMemoryExtracted | None = None,
@@ -1561,6 +1648,8 @@ async def list_long_term_memories(
         memory_type: Optional memory type filter
         extraction_strategy: Optional extraction strategy filter
         event_date: Optional event date filter
+        pinned: Optional pin state filter
+        extracted_from: Optional source handle filter
         memory_hash: Optional memory hash filter
         id: Optional memory ID filter
         discrete_memory_extracted: Optional discrete memory extracted filter
@@ -1585,6 +1674,8 @@ async def list_long_term_memories(
         memory_type=memory_type,
         extraction_strategy=extraction_strategy,
         event_date=event_date,
+        pinned=pinned,
+        extracted_from=extracted_from,
         memory_hash=memory_hash,
         id=id,
         discrete_memory_extracted=discrete_memory_extracted,
@@ -1694,10 +1785,13 @@ async def deduplicate_by_hash(
         if existing_memory.id:
             # Use the memory key format to update last_accessed
             existing_key = Keys.memory_key(existing_memory.id)
-            await redis_client.hset(
-                existing_key,
-                mapping={"last_accessed": str(int(datetime.now(UTC).timestamp()))},
-            )  # type: ignore
+            updates = {"last_accessed": str(int(datetime.now(UTC).timestamp()))}
+
+            # Ensure that the final memory keeps the pin state, in case we're removing the pinned one
+            if memory.pinned and not existing_memory.pinned:
+                updates["pinned"] = "1"
+
+            await redis_client.hset(existing_key, mapping=updates)  # type: ignore
 
             # Don't save this memory, it's a duplicate
             return None, True
@@ -1717,6 +1811,9 @@ async def deduplicate_by_id(
 
     When two memories have the same ID, the most recent memory replaces the
     oldest memory. (They are not merged.)
+
+    Curation and provenance fields are the exception: where the incoming record leaves them at their falsy defaults,
+    the stored values are kept, so that an idempotent retry of a POST cannot unpin or un-cite a record.
 
     Args:
         memory: The memory to check for ID duplicates
@@ -1782,6 +1879,11 @@ async def deduplicate_by_id(
         if existing_memory.persisted_at:
             memory.persisted_at = existing_memory.persisted_at
 
+        # Preserve curation and provenance the incoming record didn't speak to
+        for field in _PRESERVED_ON_OVERWRITE:
+            if not getattr(memory, field) and getattr(existing_memory, field):
+                setattr(memory, field, getattr(existing_memory, field))
+
         # Delete the existing memory using the database
         if existing_memory.id:
             await db.delete_memories([existing_memory.id])
@@ -1828,11 +1930,15 @@ async def _semantic_merge_group_is_cohesive(
             # consume one search slot before we filter it out locally.
             limit=SEMANTIC_DEDUP_QUERY_LIMIT,
         )
+
+        # Pinned neighbors are excluded from merge groups upstream,
+        # so counting them here would read as an "extra neighbor" and block the whole merge.
         related_ids = {
             result.id
             for result in (search_result.memories if search_result else [])
-            if result.id not in {candidate_memory.id, memory.id}
+            if result.id not in {candidate_memory.id, memory.id} and not result.pinned
         }
+
         extra_ids = related_ids - candidate_ids
         if extra_ids and not merge_group_is_capped:
             logger.info(
@@ -1875,6 +1981,9 @@ async def deduplicate_by_semantic_search(
     considered duplicates. A threshold of 0.35 works well for catching
     paraphrased content while avoiding false positives.
 
+    Pinned memories are never merged automatically; a person pinned a record
+    specifically to _stop_ it being rewritten, so it's ineligible for merging
+
     Args:
         memory: The memory to check for semantic duplicates
         redis_client: Optional Redis client
@@ -1892,6 +2001,14 @@ async def deduplicate_by_semantic_search(
     if not memory.text:
         logger.debug(
             "Skipping semantic deduplication for memory with empty text: memory_id=%s",
+            memory.id,
+        )
+        return memory, False
+
+    # A pinned memory is curated, so we skip from deduplication
+    if memory.pinned:
+        logger.debug(
+            "Skipping semantic deduplication for pinned memory: memory_id=%s",
             memory.id,
         )
         return memory, False
@@ -1943,10 +2060,11 @@ async def deduplicate_by_semantic_search(
 
     vector_search_result = search_result.memories if search_result else []
 
-    # Filter out the memory itself from the search results (avoid self-duplication)
-    vector_search_result = [m for m in vector_search_result if m.id != memory.id][
-        :SEMANTIC_DEDUP_SEARCH_LIMIT
-    ]
+    # Filter out the memory itself from the search results (avoid self-duplication),
+    # along with any pinned neighbor, which must not be folded into a merge.
+    vector_search_result = [
+        m for m in vector_search_result if m.id != memory.id and not m.pinned
+    ][:SEMANTIC_DEDUP_SEARCH_LIMIT]
 
     if vector_search_result and len(vector_search_result) > 0:
         merge_group = [memory] + vector_search_result
@@ -2345,6 +2463,7 @@ async def update_long_term_memory(
         "session_id",
         "event_date",
         "pinned",
+        "extracted_from",
     }
 
     # Validate update fields

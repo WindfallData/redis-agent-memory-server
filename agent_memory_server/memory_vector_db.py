@@ -28,12 +28,14 @@ from agent_memory_server.filters import (
     DiscreteMemoryExtracted,
     Entities,
     EventDate,
+    ExtractedFrom,
     ExtractionStrategy,
     Id,
     LastAccessed,
     MemoryHash,
     MemoryType,
     Namespace,
+    Pinned,
     SessionId,
     Topics,
     UserId,
@@ -176,6 +178,8 @@ class MemoryVectorDatabase(ABC):
         memory_type: MemoryType | None = None,
         extraction_strategy: ExtractionStrategy | None = None,
         event_date: EventDate | None = None,
+        pinned: Pinned | None = None,
+        extracted_from: ExtractedFrom | None = None,
         memory_hash: MemoryHash | None = None,
         id: Id | None = None,
         discrete_memory_extracted: DiscreteMemoryExtracted | None = None,
@@ -208,6 +212,8 @@ class MemoryVectorDatabase(ABC):
             memory_type: Optional memory type filter
             extraction_strategy: Optional extraction strategy filter
             event_date: Optional event date filter
+            pinned: Optional pin state filter
+            extracted_from: Optional source handle filter
             memory_hash: Optional memory hash filter
             id: Optional memory ID filter
             discrete_memory_extracted: Optional discrete memory extracted filter
@@ -278,6 +284,8 @@ class MemoryVectorDatabase(ABC):
         memory_type: MemoryType | None = None,
         extraction_strategy: ExtractionStrategy | None = None,
         event_date: EventDate | None = None,
+        pinned: Pinned | None = None,
+        extracted_from: ExtractedFrom | None = None,
         memory_hash: MemoryHash | None = None,
         id: Id | None = None,
         discrete_memory_extracted: DiscreteMemoryExtracted | None = None,
@@ -303,6 +311,8 @@ class MemoryVectorDatabase(ABC):
             memory_type: Optional memory type filter
             extraction_strategy: Optional extraction strategy filter
             event_date: Optional event date filter
+            pinned: Optional pin state filter
+            extracted_from: Optional source handle filter
             memory_hash: Optional memory hash filter
             id: Optional memory ID filter
             discrete_memory_extracted: Optional discrete memory extracted filter
@@ -846,6 +856,8 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
         memory_type: MemoryType | None = None,
         extraction_strategy: ExtractionStrategy | None = None,
         event_date: EventDate | None = None,
+        pinned: Pinned | None = None,
+        extracted_from: ExtractedFrom | None = None,
         memory_hash: MemoryHash | None = None,
         id: Id | None = None,
         discrete_memory_extracted: DiscreteMemoryExtracted | None = None,
@@ -877,6 +889,8 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
             created_at=created_at,
             last_accessed=last_accessed,
             event_date=event_date,
+            pinned=pinned,
+            extracted_from=extracted_from,
             memory_hash=memory_hash,
             id=id,
             discrete_memory_extracted=discrete_memory_extracted,
@@ -1086,6 +1100,8 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
         memory_type: MemoryType | None = None,
         extraction_strategy: ExtractionStrategy | None = None,
         event_date: EventDate | None = None,
+        pinned: Pinned | None = None,
+        extracted_from: ExtractedFrom | None = None,
         memory_hash: MemoryHash | None = None,
         id: Id | None = None,
         discrete_memory_extracted: DiscreteMemoryExtracted | None = None,
@@ -1120,6 +1136,8 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
                 created_at=created_at,
                 last_accessed=last_accessed,
                 event_date=event_date,
+                pinned=pinned,
+                extracted_from=extracted_from,
                 memory_hash=memory_hash,
                 id=id,
                 discrete_memory_extracted=discrete_memory_extracted,

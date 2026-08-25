@@ -17,12 +17,14 @@ from agent_memory_server.filters import (
     DiscreteMemoryExtracted,
     Entities,
     EventDate,
+    ExtractedFrom,
     ExtractionStrategy,
     Id,
     LastAccessed,
     MemoryHash,
     MemoryType,
     Namespace,
+    Pinned,
     SessionId,
     Topics,
     UserId,
@@ -787,6 +789,14 @@ class SearchRequest(BaseModel):
         default=None,
         description="Optional event date to filter by (for episodic memories)",
     )
+    pinned: Pinned | None = Field(
+        default=None,
+        description="Optional pin state to filter by",
+    )
+    extracted_from: ExtractedFrom | None = Field(
+        default=None,
+        description="Optional source handles to filter by",
+    )
     limit: int = Field(
         default=10,
         ge=1,
@@ -867,6 +877,12 @@ class SearchRequest(BaseModel):
         if self.event_date is not None:
             filters["event_date"] = self.event_date
 
+        if self.pinned is not None:
+            filters["pinned"] = self.pinned
+
+        if self.extracted_from is not None:
+            filters["extracted_from"] = self.extracted_from
+
         return filters
 
 
@@ -913,6 +929,14 @@ class ListRequest(BaseModel):
         default=None,
         description="Optional event date to filter by (for episodic memories)",
     )
+    pinned: Pinned | None = Field(
+        default=None,
+        description="Optional pin state to filter by",
+    )
+    extracted_from: ExtractedFrom | None = Field(
+        default=None,
+        description="Optional source handles to filter by",
+    )
     memory_hash: MemoryHash | None = Field(
         default=None,
         description="Optional memory hash to filter by",
@@ -955,6 +979,8 @@ class ListRequest(BaseModel):
             "memory_type",
             "extraction_strategy",
             "event_date",
+            "pinned",
+            "extracted_from",
             "memory_hash",
             "id",
             "discrete_memory_extracted",
@@ -1045,8 +1071,12 @@ class EditMemoryRecordRequest(BaseModel):
         default=None,
         description="Whether this memory is pinned and should not be auto-deleted",
     )
+    extracted_from: list[str] | None = Field(
+        default=None,
+        description="Updated source handles this memory was extracted from"
+    )
 
-    @field_validator("topics", "entities", mode="after")
+    @field_validator("topics", "entities", "extracted_from", mode="after")
     @classmethod
     def reject_commas_in_tags(cls, v: list[str] | None, info) -> list[str] | None:
         return validate_no_commas_in_tags(v, info.field_name)

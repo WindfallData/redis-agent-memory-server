@@ -211,18 +211,70 @@ Combines vector similarity with full-text keyword matching. Use `hybrid_alpha` t
 }
 ```
 
+## Curation and Provenance Fields
+
+Two fields carry intent rather than content:
+- `pinned` marks a record a human has curated explicitly,
+- `extract_from` is the canonical source handle.
+- `metadata` is free-form memory meta data
+
+### `pinned`
+
+Beyond exempting a memory from being forgotten, a pinned record is **ineligible for automatic merging**:
+semantic deduplication skips it, and the hash-duplicate pass keeps the pinned copy rather than the most recent one.
+
+Pin state is a boolean filter:
+
+```json
+{
+  "namespace": {"eq": "account_123"},
+  "pinned": {"eq": true},
+  "limit": 50
+}
+```
+
+### `extracted_from`
+
+`extracted_from` is the canonical source handle: which document, message or upload a memory came from.
+
+```json
+{
+  "namespace": {"eq": "account_123"},
+  "extracted_from": {"any": ["doc_7", "doc_9"]},
+  "limit": 50
+}
+```
+
+### `metadata`
+
+`metadata` is stored and returned, and survives merging and overwrites, but it is **not** filterable:
+it is text-indexed, so filtering on a key would mean promoting that key to its own indexed field and reindexing.
+
+### Source handles and commas
+
+`topics`, `entities` and `extracted_from` all store their values comma-separated, so an individual value cannot contain a comma;
+the server rejects it. Raw URLs and filenames therefore need encoding before they can be used as source handles.
+
 ## Deduplication and Compaction
 
 Long-term memory automatically manages duplicates through:
 
 ### Hash-Based Deduplication
 - Identical text content is automatically deduplicated
-- Preserves the most recent version with complete metadata
+- Preserves the most recent version with complete metadata, unless one of the duplicates is pinned, in which case the pinned memory survives.
+- A pin carried by an incoming duplicate transfers to the copy that survives
 
 ### Semantic Deduplication
 - Uses vector similarity to identify semantically similar memories
 - LLM-powered merging of related memories
 - Configurable similarity thresholds
+- Pinned memories are excluded entirely
+- Merged records carry forward the non-text fields: `pinned`, `extracted_from`, `metadata` (after merging)
+
+### Same-ID Overwrites
+- Re-posting a record with an existing id replaces it rather than merging
+- Curation and provenance are the exception: where the incoming record leaves `pinned`, `metadata`, `extracted_from`, `event_date` or `access_count` at their defaults, the stored values are kept.
+- Supplying a value still replaces the stored one, and clearing a field deliberately is what `PATCH` is for
 
 ### Automatic Compaction
 ```python
