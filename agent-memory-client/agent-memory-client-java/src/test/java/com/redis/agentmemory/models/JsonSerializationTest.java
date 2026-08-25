@@ -5,6 +5,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.redis.agentmemory.models.common.AckResponse;
 import com.redis.agentmemory.models.health.HealthCheckResponse;
 import com.redis.agentmemory.models.longtermemory.MemoryRecord;
+import com.redis.agentmemory.models.longtermemory.MemoryRecordResult;
 import com.redis.agentmemory.models.longtermemory.MemoryType;
 import com.redis.agentmemory.models.workingmemory.MemoryMessage;
 import com.redis.agentmemory.models.workingmemory.SessionListResponse;
@@ -75,6 +76,48 @@ class JsonSerializationTest {
         assertEquals(2, deserialized.getMetadata().get("message_count"));
         assertNotNull(deserialized.getTopics());
         assertEquals(2, deserialized.getTopics().size());
+    }
+
+    @Test
+    void testMemoryRecordCarriesPinnedAndAccessCount() throws Exception {
+        MemoryRecord record = new MemoryRecord("Curated fact");
+        record.setPinned(true);
+        record.setAccessCount(5);
+
+        String json = objectMapper.writeValueAsString(record);
+        assertTrue(json.contains("\"pinned\":true"));
+        assertTrue(json.contains("\"access_count\":5"), "snake_case on the wire");
+
+        MemoryRecord deserialized = objectMapper.readValue(json, MemoryRecord.class);
+        assertTrue(deserialized.isPinned());
+        assertEquals(5, deserialized.getAccessCount());
+    }
+
+    @Test
+    void testMemoryRecordReadsPinStateFromServerPayload() throws Exception {
+        String serverJson = "{\"id\":\"01HX\",\"text\":\"Curated fact\","
+                + "\"pinned\":true,\"access_count\":12,"
+                + "\"extracted_from\":[\"doc-1\"],\"memory_type\":\"semantic\"}";
+
+        MemoryRecord record = objectMapper.readValue(serverJson, MemoryRecord.class);
+
+        assertTrue(record.isPinned());
+        assertEquals(12, record.getAccessCount());
+        assertEquals(java.util.List.of("doc-1"), record.getExtractedFrom());
+    }
+
+    @Test
+    void testMemoryRecordResultInheritsPinnedAndAccessCount() throws Exception {
+        String serverJson = "{\"id\":\"01HX\",\"text\":\"Curated fact\",\"dist\":0.1,"
+                + "\"score\":0.9,\"score_type\":\"semantic\","
+                + "\"pinned\":true,\"access_count\":4}";
+
+        MemoryRecordResult result =
+                objectMapper.readValue(serverJson, MemoryRecordResult.class);
+
+        assertTrue(result.isPinned());
+        assertEquals(4, result.getAccessCount());
+        assertEquals("semantic", result.getScoreType());
     }
 
     @Test

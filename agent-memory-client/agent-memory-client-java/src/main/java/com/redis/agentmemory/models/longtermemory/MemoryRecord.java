@@ -50,6 +50,11 @@ public class MemoryRecord {
     @Nullable
     private List<String> entities;
 
+    private boolean pinned;
+
+    @JsonProperty("access_count")
+    private int accessCount;
+
     @Nullable
     @JsonProperty("memory_hash")
     private String memoryHash;
@@ -195,6 +200,22 @@ public class MemoryRecord {
         this.entities = entities;
     }
 
+    public boolean isPinned() {
+        return pinned;
+    }
+
+    public void setPinned(boolean pinned) {
+        this.pinned = pinned;
+    }
+
+    public int getAccessCount() {
+        return accessCount;
+    }
+
+    public void setAccessCount(int accessCount) {
+        this.accessCount = accessCount;
+    }
+
     @Nullable
     public String getMemoryHash() {
         return memoryHash;
@@ -289,6 +310,8 @@ public class MemoryRecord {
                 ", updatedAt=" + updatedAt +
                 ", topics=" + topics +
                 ", entities=" + entities +
+                ", pinned=" + pinned +
+                ", accessCount=" + accessCount +
                 ", memoryHash='" + memoryHash + '\'' +
                 ", discreteMemoryExtracted='" + discreteMemoryExtracted + '\'' +
                 ", memoryType=" + memoryType +
@@ -322,6 +345,8 @@ public class MemoryRecord {
         private Instant updatedAt;
         private List<String> topics;
         private List<String> entities;
+        private boolean pinned;
+        private int accessCount;
         private String memoryHash;
         private String discreteMemoryExtracted;
         private MemoryType memoryType;
@@ -362,6 +387,8 @@ public class MemoryRecord {
             this.updatedAt = record.updatedAt;
             this.topics = record.topics;
             this.entities = record.entities;
+            this.pinned = record.pinned;
+            this.accessCount = record.accessCount;
             this.memoryHash = record.memoryHash;
             this.discreteMemoryExtracted = record.discreteMemoryExtracted;
             this.memoryType = record.memoryType;
@@ -515,6 +542,26 @@ public class MemoryRecord {
         }
 
         /**
+         * Marks this memory as pinned. Pinned memories are exempt from forgetting and automatic merging.
+         * @param pinned whether the memory is pinned
+         * @return this builder
+         */
+        public Builder pinned(boolean pinned) {
+            this.pinned = pinned;
+            return this;
+        }
+
+        /**
+         * Sets the access count; best-effort only.
+         * @param accessCount the access count
+         * @return this builder
+         */
+        public Builder accessCount(int accessCount) {
+            this.accessCount = accessCount;
+            return this;
+        }
+
+        /**
          * Sets the list of IDs this memory was extracted from.
          * @param extractedFrom the list of source IDs
          * @return this builder
@@ -585,6 +632,8 @@ public class MemoryRecord {
             record.updatedAt = this.updatedAt;
             record.topics = this.topics;
             record.entities = this.entities;
+            record.pinned = this.pinned;
+            record.accessCount = this.accessCount;
             record.memoryHash = this.memoryHash;
             record.discreteMemoryExtracted = this.discreteMemoryExtracted;
             record.memoryType = this.memoryType;
