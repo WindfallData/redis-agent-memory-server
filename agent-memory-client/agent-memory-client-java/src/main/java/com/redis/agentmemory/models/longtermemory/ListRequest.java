@@ -2,6 +2,7 @@ package com.redis.agentmemory.models.longtermemory;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.redis.agentmemory.models.common.BoolFilter;
 import com.redis.agentmemory.models.common.TagFilter;
 import org.jetbrains.annotations.Nullable;
 
@@ -35,6 +36,13 @@ public class ListRequest {
     @Nullable
     @JsonProperty("extraction_strategy")
     private TagFilter extractionStrategy;
+
+    @Nullable
+    private BoolFilter pinned;
+
+    @Nullable
+    @JsonProperty("extracted_from")
+    private TagFilter extractedFrom;
 
     @Nullable
     @JsonProperty("memory_hash")
@@ -115,6 +123,24 @@ public class ListRequest {
 
     public void setExtractionStrategy(@Nullable TagFilter extractionStrategy) {
         this.extractionStrategy = extractionStrategy;
+    }
+
+    @Nullable
+    public BoolFilter getPinned() {
+        return pinned;
+    }
+
+    public void setPinned(@Nullable BoolFilter pinned) {
+        this.pinned = pinned;
+    }
+
+    @Nullable
+    public TagFilter getExtractedFrom() {
+        return extractedFrom;
+    }
+
+    public void setExtractedFrom(@Nullable TagFilter extractedFrom) {
+        this.extractedFrom = extractedFrom;
     }
 
     @Nullable
@@ -239,6 +265,32 @@ public class ListRequest {
             return this;
         }
 
+        public Builder pinned(@Nullable Boolean pinned) {
+            request.pinned = pinned != null ? BoolFilter.eq(pinned) : null;
+            return this;
+        }
+
+        public Builder pinned(@Nullable BoolFilter pinned) {
+            request.pinned = pinned;
+            return this;
+        }
+
+        public Builder extractedFrom(@Nullable String extractedFrom) {
+            request.extractedFrom = extractedFrom != null ? TagFilter.eq(extractedFrom) : null;
+            return this;
+        }
+
+        public Builder extractedFrom(@Nullable List<String> extractedFrom) {
+            var present = extractedFrom != null && !extractedFrom.isEmpty();
+            request.extractedFrom = present ? TagFilter.any(extractedFrom) : null;
+            return this;
+        }
+
+        public Builder extractedFrom(@Nullable TagFilter extractedFrom) {
+            request.extractedFrom = extractedFrom;
+            return this;
+        }
+
         public Builder memoryHash(@Nullable String memoryHash) {
             request.memoryHash = memoryHash != null ? TagFilter.eq(memoryHash) : null;
             return this;
@@ -303,6 +355,8 @@ public class ListRequest {
                 + ", userId=" + userId
                 + ", memoryType=" + memoryType
                 + ", extractionStrategy=" + extractionStrategy
+                + ", pinned=" + pinned
+                + ", extractedFrom=" + extractedFrom
                 + ", memoryHash=" + memoryHash
                 + ", id=" + id
                 + ", discreteMemoryExtracted=" + discreteMemoryExtracted

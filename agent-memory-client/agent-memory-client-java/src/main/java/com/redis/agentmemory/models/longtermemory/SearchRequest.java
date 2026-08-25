@@ -2,6 +2,7 @@ package com.redis.agentmemory.models.longtermemory;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.redis.agentmemory.models.common.BoolFilter;
 import com.redis.agentmemory.models.common.TagFilter;
 import org.jetbrains.annotations.Nullable;
 
@@ -52,6 +53,13 @@ public class SearchRequest {
     @Nullable
     @JsonProperty("extraction_strategy")
     private String extractionStrategy;
+
+    @Nullable
+    private BoolFilter pinned;
+
+    @Nullable
+    @JsonProperty("extracted_from")
+    private TagFilter extractedFrom;
 
     private int limit = 10;
 
@@ -214,6 +222,24 @@ public class SearchRequest {
         this.extractionStrategy = extractionStrategy;
     }
 
+    @Nullable
+    public BoolFilter getPinned() {
+        return pinned;
+    }
+
+    public void setPinned(@Nullable BoolFilter pinned) {
+        this.pinned = pinned;
+    }
+
+    @Nullable
+    public TagFilter getExtractedFrom() {
+        return extractedFrom;
+    }
+
+    public void setExtractedFrom(@Nullable TagFilter extractedFrom) {
+        this.extractedFrom = extractedFrom;
+    }
+
     public int getLimit() {
         return limit;
     }
@@ -316,6 +342,8 @@ public class SearchRequest {
                 ", userId=" + userId +
                 ", distanceThreshold=" + distanceThreshold +
                 ", extractionStrategy='" + extractionStrategy + '\'' +
+                ", pinned=" + pinned +
+                ", extractedFrom=" + extractedFrom +
                 ", limit=" + limit +
                 ", offset=" + offset +
                 ", recencyBoost=" + recencyBoost +
@@ -422,6 +450,32 @@ public class SearchRequest {
 
         public Builder extractionStrategy(@Nullable String extractionStrategy) {
             request.extractionStrategy = extractionStrategy;
+            return this;
+        }
+
+        public Builder pinned(@Nullable Boolean pinned) {
+            request.pinned = pinned != null ? BoolFilter.eq(pinned) : null;
+            return this;
+        }
+
+        public Builder pinned(@Nullable BoolFilter pinned) {
+            request.pinned = pinned;
+            return this;
+        }
+
+        public Builder extractedFrom(@Nullable String extractedFrom) {
+            request.extractedFrom = extractedFrom != null ? TagFilter.eq(extractedFrom) : null;
+            return this;
+        }
+
+        public Builder extractedFrom(@Nullable List<String> extractedFrom) {
+            var present = extractedFrom != null && !extractedFrom.isEmpty();
+            request.extractedFrom = present ? TagFilter.any(extractedFrom) : null;
+            return this;
+        }
+
+        public Builder extractedFrom(@Nullable TagFilter extractedFrom) {
+            request.extractedFrom = extractedFrom;
             return this;
         }
 

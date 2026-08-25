@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.redis.agentmemory.MemoryAPIClient;
 import com.redis.agentmemory.models.common.AckResponse;
+import com.redis.agentmemory.models.common.BoolFilter;
 import com.redis.agentmemory.models.common.TagFilter;
 import com.redis.agentmemory.models.longtermemory.*;
 import okhttp3.mockwebserver.MockResponse;
@@ -816,6 +817,107 @@ class LongTermMemoryServiceTest {
                 .build();
 
         assertNull(request.getTopics());
+    }
+
+    @Test
+    void testListLongTermMemories_WithPinnedFilter() throws Exception {
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(objectMapper.writeValueAsString(emptyResults())));
+
+        ListRequest request = ListRequest.builder()
+                .namespace("account-123")
+                .pinned(true)
+                .build();
+
+        client.longTermMemory().listLongTermMemories(request);
+
+        String body = mockServer.takeRequest().getBody().readUtf8();
+        assertTrue(body.contains("\"pinned\":{\"eq\":true}"));
+    }
+
+    @Test
+    void testListLongTermMemories_WithUnpinnedFilter() throws Exception {
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(objectMapper.writeValueAsString(emptyResults())));
+
+        ListRequest request = ListRequest.builder()
+                .pinned(BoolFilter.isFalse())
+                .build();
+
+        client.longTermMemory().listLongTermMemories(request);
+
+        String body = mockServer.takeRequest().getBody().readUtf8();
+        assertTrue(body.contains("\"pinned\":{\"eq\":false}"));
+    }
+
+    @Test
+    void testListLongTermMemories_WithExtractedFromFilter() throws Exception {
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(objectMapper.writeValueAsString(emptyResults())));
+
+        ListRequest request = ListRequest.builder()
+                .extractedFrom(List.of("doc-1", "doc-2"))
+                .build();
+
+        client.longTermMemory().listLongTermMemories(request);
+
+        String body = mockServer.takeRequest().getBody().readUtf8();
+        assertTrue(body.contains("\"extracted_from\":{\"any\":[\"doc-1\",\"doc-2\"]}"));
+    }
+
+    @Test
+    void testSearchLongTermMemories_WithPinnedAndExtractedFrom() throws Exception {
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(objectMapper.writeValueAsString(emptyResults())));
+
+        SearchRequest request = SearchRequest.builder()
+                .text("founding date")
+                .pinned(true)
+                .extractedFrom("doc-1")
+                .build();
+
+        client.longTermMemory().searchLongTermMemories(request);
+
+        String body = mockServer.takeRequest().getBody().readUtf8();
+        assertTrue(body.contains("\"pinned\":{\"eq\":true}"));
+        assertTrue(body.contains("\"extracted_from\":{\"eq\":\"doc-1\"}"));
+    }
+
+    @Test
+    void testFilterFieldsAreOmittedWhenUnset() throws Exception {
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(objectMapper.writeValueAsString(emptyResults())));
+
+        client.longTermMemory().listLongTermMemories(ListRequest.builder().build());
+
+        String body = mockServer.takeRequest().getBody().readUtf8();
+        assertFalse(body.contains("pinned"));
+        assertFalse(body.contains("extracted_from"));
+    }
+
+    @Test
+    void testEditLongTermMemory_CanSetExtractedFrom() throws Exception {
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"status\":\"ok\"}"));
+
+        client.longTermMemory().editLongTermMemory(
+                "01HX", Map.of("extracted_from", List.of("doc-42")));
+
+        RecordedRequest recorded = mockServer.takeRequest();
+        assertEquals("PATCH", recorded.getMethod());
+        assertTrue(recorded.getBody().readUtf8().contains("\"extracted_from\":[\"doc-42\"]"));
     }
 
     private MemoryRecordResults emptyResults() {

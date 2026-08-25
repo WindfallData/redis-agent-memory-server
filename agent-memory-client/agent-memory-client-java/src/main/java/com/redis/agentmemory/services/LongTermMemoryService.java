@@ -110,6 +110,12 @@ public class LongTermMemoryService extends BaseService {
         if (request.getExtractionStrategy() != null) {
             payload.put("extraction_strategy", Map.of("eq", request.getExtractionStrategy()));
         }
+        if (request.getPinned() != null) {
+            payload.put("pinned", request.getPinned());
+        }
+        if (request.getExtractedFrom() != null) {
+            payload.put("extracted_from", request.getExtractedFrom());
+        }
 
         // Add recency boost parameters if present
         if (request.getRecencyBoost() != null) {
@@ -206,6 +212,12 @@ public class LongTermMemoryService extends BaseService {
         }
         if (request.getExtractionStrategy() != null) {
             payload.put("extraction_strategy", request.getExtractionStrategy());
+        }
+        if (request.getPinned() != null) {
+            payload.put("pinned", request.getPinned());
+        }
+        if (request.getExtractedFrom() != null) {
+            payload.put("extracted_from", request.getExtractedFrom());
         }
         if (request.getMemoryHash() != null) {
             payload.put("memory_hash", request.getMemoryHash());
