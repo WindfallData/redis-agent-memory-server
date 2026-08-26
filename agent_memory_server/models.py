@@ -29,7 +29,10 @@ from agent_memory_server.filters import (
     Topics,
     UserId,
 )
-from agent_memory_server.utils.tag_codec import validate_no_commas_in_tags
+from agent_memory_server.utils.tag_codec import (
+    dedupe_tag_values,
+    validate_no_commas_in_tags,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -346,6 +349,11 @@ class MemoryRecord(BaseModel):
     @classmethod
     def reject_commas_in_tags(cls, v: list[str] | None, info) -> list[str] | None:
         return validate_no_commas_in_tags(v, info.field_name)
+
+    @field_validator("topics", "entities", "extracted_from", mode="after")
+    @classmethod
+    def dedupe_tags(cls, v: list[str] | None) -> list[str] | None:
+        return dedupe_tag_values(v)
 
 
 class ExtractedMemoryRecord(MemoryRecord):
@@ -1080,6 +1088,11 @@ class EditMemoryRecordRequest(BaseModel):
     @classmethod
     def reject_commas_in_tags(cls, v: list[str] | None, info) -> list[str] | None:
         return validate_no_commas_in_tags(v, info.field_name)
+
+    @field_validator("topics", "entities", "extracted_from", mode="after")
+    @classmethod
+    def dedupe_tags(cls, v: list[str] | None) -> list[str] | None:
+        return dedupe_tag_values(v)
 
 
 class TaskStatusEnum(str, Enum):

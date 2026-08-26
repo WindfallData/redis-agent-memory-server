@@ -807,11 +807,9 @@ async def extract_memory_structure(
     # Process messages for topic/entity extraction
     topics, entities = await handle_extraction(memory.text)
 
-    merged_topics = memory.topics + topics if memory.topics else topics
-    merged_entities = memory.entities + entities if memory.entities else entities
-
-    merged_topics = sanitize_tag_values(merged_topics) or []
-    merged_entities = sanitize_tag_values(merged_entities) or []
+    # Merge extraction; dedupe tag values, since they're readded on extraction
+    merged_topics = sanitize_tag_values([*(memory.topics or []), *topics]) or []
+    merged_entities = sanitize_tag_values([*(memory.entities or []), *entities]) or []
 
     # Guard: only update if the key still exists. A race between semantic
     # deduplication (which deletes merged keys) and this background task
@@ -857,20 +855,20 @@ async def merge_memories_with_llm(
     if len(namespaces) > 1:
         raise ValueError("Cannot merge memories with different namespaces")
 
-    # Create a unified set of topics, entities and source handles
-    all_topics = set()
-    all_entities = set()
-    all_extracted_from = set()
+    # Union the topics, entities and source handles in memory order, dropping dupes
+    all_topics: list[str] = []
+    all_entities: list[str] = []
+    all_extracted_from: list[str] = []
 
     for memory in memories:
         if memory.topics:
-            all_topics.update(memory.topics)
+            all_topics.extend(memory.topics)
 
         if memory.entities:
-            all_entities.update(memory.entities)
+            all_entities.extend(memory.entities)
 
         if memory.extracted_from:
-            all_extracted_from.update(memory.extracted_from)
+            all_extracted_from.extend(memory.extracted_from)
 
     # Get the memory texts for LLM prompt
     memory_texts = [m.text for m in memories]
@@ -970,16 +968,14 @@ async def merge_memories_with_llm(
         created_at=datetime.fromtimestamp(created_at, UTC),
         last_accessed=datetime.fromtimestamp(last_accessed, UTC),
         updated_at=datetime.now(UTC),
-        topics=sanitize_tag_values(list(all_topics)) if all_topics else None,
-        entities=sanitize_tag_values(list(all_entities)) if all_entities else None,
+        topics=sanitize_tag_values(all_topics) if all_topics else None,
+        entities=sanitize_tag_values(all_entities) if all_entities else None,
         memory_type=MemoryTypeEnum(memory_type),
         discrete_memory_extracted="t",
         pinned=pinned,
         metadata=metadata,
         extracted_from=(
-            sanitize_tag_values(list(all_extracted_from))
-            if all_extracted_from
-            else None
+            sanitize_tag_values(all_extracted_from) if all_extracted_from else None
         ),
         access_count=access_count,
         event_date=event_date,

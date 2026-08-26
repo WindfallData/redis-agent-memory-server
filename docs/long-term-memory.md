@@ -255,6 +255,9 @@ it is text-indexed, so filtering on a key would mean promoting that key to its o
 `topics`, `entities` and `extracted_from` all store their values comma-separated, so an individual value cannot contain a comma;
 the server rejects it. Raw URLs and filenames therefore need encoding before they can be used as source handles.
 
+Repeated values are dropped on write, keeping the first spelling of each. The comparison is case-insensitive, matching the
+underlying TAG fields — `Books` and `books` are one tag at query time either way, so only the first one seen is kept.
+
 ## Deduplication and Compaction
 
 Long-term memory automatically manages duplicates through:
