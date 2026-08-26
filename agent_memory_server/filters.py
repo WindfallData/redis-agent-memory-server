@@ -117,6 +117,29 @@ class EnumFilter(BaseModel):
         raise ValueError("No filter provided")
 
 
+class BoolFilter(BaseModel):
+    """Filter for boolean fields stored as 0/1 in a tag field."""
+
+    field: str
+    eq: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_filters(self) -> Self:
+        if self.eq is None:
+            raise ValueError("eq must be set")
+        return self
+
+    def to_filter(self) -> FilterExpression:
+        if self.eq is None:
+            raise ValueError("No filter provided")
+        if self.eq:
+            return Tag(self.field) == "1"
+
+        # falsey is the negated truthy;
+        # records written before `pinned` have nil, so checking against "0" would miss them
+        return Tag(self.field) != "1"
+
+
 class NumFilter(BaseModel):
     field: str
     gt: int | None = None
@@ -274,3 +297,11 @@ class Id(TagFilter):
 
 class DiscreteMemoryExtracted(TagFilter):
     field: str = "discrete_memory_extracted"
+
+
+class Pinned(BoolFilter):
+    field: str = "pinned"
+
+
+class ExtractedFrom(TagFilter):
+    field: str = "extracted_from"

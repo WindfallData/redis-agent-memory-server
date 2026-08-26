@@ -6,6 +6,7 @@ import pytest
 
 from agent_memory_server.utils.tag_codec import (
     decode_tag_values,
+    dedupe_tag_values,
     encode_tag_values,
     sanitize_tag_values,
     validate_no_commas_in_tags,
@@ -119,3 +120,33 @@ def test_sanitize_tag_values_multiple():
 def test_sanitize_tag_values_handles_non_string_elements():
     result = sanitize_tag_values([None, 42, "ok, value", True])
     assert result == ["42", "ok value", "True"]
+
+
+def test_sanitize_tag_values_drops_repeats():
+    assert sanitize_tag_values(["books", "reading", "books"]) == ["books", "reading"]
+
+
+def test_sanitize_tag_values_drops_repeats_across_casing():
+    assert sanitize_tag_values(["Books", "books", "BOOKS"]) == ["Books"]
+
+
+def test_sanitize_tag_values_drops_repeats_created_by_cleaning():
+    assert sanitize_tag_values(["Austin, TX", "Austin  TX"]) == ["Austin TX"]
+
+
+# --- dedupe_tag_values ---
+
+
+def test_dedupe_tag_values_handles_none():
+    assert dedupe_tag_values(None) is None
+
+
+def test_dedupe_tag_values_keeps_first_spelling_and_order():
+    assert dedupe_tag_values(["Literature", "poems", "literature", "Poems"]) == [
+        "Literature",
+        "poems",
+    ]
+
+
+def test_dedupe_tag_values_leaves_distinct_values_alone():
+    assert dedupe_tag_values(["a", "b", "c"]) == ["a", "b", "c"]

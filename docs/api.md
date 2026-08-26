@@ -632,6 +632,8 @@ Payload for editing a memory record
 | `user_id` | string \| null | No | Updated user ID for the memory |
 | `session_id` | string \| null | No | Updated session ID for the memory |
 | `event_date` | string \| null | No | Updated event date for episodic memories |
+| `pinned` | boolean \| null | No | Whether this memory is pinned and should not be auto-deleted or auto-merged |
+| `extracted_from` | array\[string] \| null | No | Updated source handles this memory was extracted from. Handles cannot contain commas — see [note](#source-handles-and-commas) |
 
 ### MemoryRecordResultsResponse
 
@@ -663,6 +665,8 @@ Payload for long-term memory search
 | `memory_type` | MemoryType \| null | No | Optional memory type to filter by |
 | `event_date` | EventDate \| null | No | Optional event date to filter by (for episodic memories) |
 | `extraction_strategy` | ExtractionStrategy \| null | No | Optional extraction strategy to filter by |
+| `pinned` | Pinned \| null | No | Optional pin state to filter by |
+| `extracted_from` | ExtractedFrom \| null | No | Optional source handles to filter by |
 | `limit` | integer | No | Optional limit on the number of results |
 | `offset` | integer | No | Optional offset |
 | `recency_boost` | boolean \| null | No | Enable recency-aware re-ranking (defaults to enabled if None |
@@ -690,6 +694,8 @@ Payload for long-term memory listing.
 | `memory_type` | MemoryType \| null | No | Optional memory type to filter by |
 | `extraction_strategy` | ExtractionStrategy \| null | No | Optional extraction strategy to filter by |
 | `event_date` | EventDate \| null | No | Optional event date to filter by (for episodic memories) |
+| `pinned` | Pinned \| null | No | Optional pin state to filter by |
+| `extracted_from` | ExtractedFrom \| null | No | Optional source handles to filter by |
 | `memory_hash` | MemoryHash \| null | No | Optional memory hash to filter by |
 | `id` | Id \| null | No | Optional memory ID to filter by. Accepts multiple values, so this doubles as a batch fetch of known ids |
 | `discrete_memory_extracted` | DiscreteMemoryExtracted \| null | No | Optional discrete memory extracted flag to filter by |

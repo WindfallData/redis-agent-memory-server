@@ -2,7 +2,6 @@ import contextlib
 import os
 import platform
 import time
-from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 from unittest.mock import AsyncMock, patch
@@ -647,6 +646,21 @@ class MockEmbeddings:
         return [0.1] * self.dimensions
 
 
+def _matches_tag_filter(filter_obj: Any, values: list[str]) -> bool:
+    """Evaluate the TagFilter forms the mock database needs to understand."""
+    if (eq := getattr(filter_obj, "eq", None)) is not None:
+        return eq in values
+    if ne := getattr(filter_obj, "ne", None):
+        return ne not in values
+    if any_of := getattr(filter_obj, "any", None):
+        return any(value in values for value in any_of)
+    if all_of := getattr(filter_obj, "all", None):
+        return all(value in values for value in all_of)
+    if startswith := getattr(filter_obj, "startswith", None):
+        return any(value.startswith(startswith) for value in values)
+    return True
+
+
 class MockMemoryVectorDatabase(MemoryVectorDatabase):
     """Mock MemoryVectorDatabase for testing without real embeddings."""
 
@@ -678,6 +692,8 @@ class MockMemoryVectorDatabase(MemoryVectorDatabase):
         memory_type: Any = None,
         extraction_strategy: Any = None,
         event_date: Any = None,
+        pinned: Any = None,
+        extracted_from: Any = None,
         memory_hash: Any = None,
         id: Any = None,
         discrete_memory_extracted: Any = None,
@@ -734,28 +750,20 @@ class MockMemoryVectorDatabase(MemoryVectorDatabase):
                 and memory.extraction_strategy != extraction_strategy.eq
             ):
                 continue
+            if (
+                pinned is not None
+                and getattr(pinned, "eq", None) is not None
+                and bool(memory.pinned) is not bool(pinned.eq)
+            ):
+                continue
+            if extracted_from is not None and not _matches_tag_filter(
+                extracted_from, memory.extracted_from or []
+            ):
+                continue
 
-            result = MemoryRecordResult(
-                id=memory.id,
-                text=memory.text,
-                dist=0.1,
-                created_at=memory.created_at or datetime.now(UTC),
-                updated_at=memory.updated_at or datetime.now(UTC),
-                last_accessed=memory.last_accessed or datetime.now(UTC),
-                user_id=memory.user_id,
-                session_id=memory.session_id,
-                namespace=memory.namespace,
-                topics=memory.topics or [],
-                entities=memory.entities or [],
-                memory_hash=memory.memory_hash or "",
-                memory_type=memory.memory_type.value
-                if hasattr(memory.memory_type, "value")
-                else str(memory.memory_type),
-                persisted_at=memory.persisted_at,
-                extraction_strategy=memory.extraction_strategy,
-                extraction_strategy_config=memory.extraction_strategy_config,
-                metadata=memory.metadata,
-            )
+            # Copy the whole record: naming fields here means the mock quietly
+            # loses pin state and provenance that the real database returns.
+            result = MemoryRecordResult(**memory.model_dump(), dist=0.1)
             results.append(result)
 
         # Apply pagination
@@ -815,6 +823,8 @@ class MockMemoryVectorDatabase(MemoryVectorDatabase):
         memory_type: Any = None,
         extraction_strategy: Any = None,
         event_date: Any = None,
+        pinned: Any = None,
+        extracted_from: Any = None,
         memory_hash: Any = None,
         id: Any = None,
         discrete_memory_extracted: Any = None,
@@ -877,28 +887,18 @@ class MockMemoryVectorDatabase(MemoryVectorDatabase):
                 and memory.extraction_strategy != extraction_strategy.eq
             ):
                 continue
+            if (
+                pinned is not None
+                and getattr(pinned, "eq", None) is not None
+                and bool(memory.pinned) is not bool(pinned.eq)
+            ):
+                continue
+            if extracted_from is not None and not _matches_tag_filter(
+                extracted_from, memory.extracted_from or []
+            ):
+                continue
 
-            result = MemoryRecordResult(
-                id=memory.id,
-                text=memory.text,
-                dist=0.0,  # No distance for filter-only queries
-                created_at=memory.created_at or datetime.now(UTC),
-                updated_at=memory.updated_at or datetime.now(UTC),
-                last_accessed=memory.last_accessed or datetime.now(UTC),
-                user_id=memory.user_id,
-                session_id=memory.session_id,
-                namespace=memory.namespace,
-                topics=memory.topics or [],
-                entities=memory.entities or [],
-                memory_hash=memory.memory_hash or "",
-                memory_type=memory.memory_type.value
-                if hasattr(memory.memory_type, "value")
-                else str(memory.memory_type),
-                persisted_at=memory.persisted_at,
-                extraction_strategy=memory.extraction_strategy,
-                extraction_strategy_config=memory.extraction_strategy_config,
-                metadata=memory.metadata,
-            )
+            result = MemoryRecordResult(**memory.model_dump(), dist=0.0)
             results.append(result)
 
         if sort_by is not None:

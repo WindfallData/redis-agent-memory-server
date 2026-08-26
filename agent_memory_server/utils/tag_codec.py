@@ -18,8 +18,25 @@ def validate_no_commas_in_tags(
     return values
 
 
+def dedupe_tag_values(values: list[str] | None) -> list[str] | None:
+    """Drop case-insensitive repeated tag values, keeping the first spelling of each.
+    Order is preserved so merges stay deterministic.
+    """
+    if values is None:
+        return None
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(value)
+    return deduped
+
+
 def sanitize_tag_values(values: list[str] | None) -> list[str] | None:
-    """Replace commas with spaces, strip whitespace, and drop empty strings.
+    """Replace commas with spaces, strip whitespace, drop empties and repeats.
 
     Intended for LLM-generated content where rejecting would crash background
     tasks.  Returns ``None`` when *values* is ``None`` or when all values are
@@ -32,7 +49,7 @@ def sanitize_tag_values(values: list[str] | None) -> list[str] | None:
         for v in values
         if v is not None
     ]
-    return [v for v in cleaned if v] or None
+    return dedupe_tag_values([v for v in cleaned if v]) or None
 
 
 def decode_tag_values(raw: Any) -> list[str]:

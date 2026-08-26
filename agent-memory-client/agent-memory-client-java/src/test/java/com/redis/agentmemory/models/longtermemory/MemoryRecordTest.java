@@ -64,4 +64,40 @@ class MemoryRecordTest {
         assertEquals("v1", record.getExtractionStrategyConfig().get("summary_version"));
         assertEquals(2, record.getMetadata().get("message_count"));
     }
+
+    @Test
+    void testPinnedAndAccessCountDefaultToUnpinnedAndZero() {
+        MemoryRecord record = new MemoryRecord();
+
+        assertFalse(record.isPinned());
+        assertEquals(0, record.getAccessCount());
+    }
+
+    @Test
+    void testPinnedAndAccessCountSettersAndGetters() {
+        MemoryRecord record = new MemoryRecord();
+
+        record.setPinned(true);
+        record.setAccessCount(7);
+
+        assertTrue(record.isPinned());
+        assertEquals(7, record.getAccessCount());
+    }
+
+    @Test
+    void testBuilderCarriesPinnedAndAccessCount() {
+        MemoryRecord record = MemoryRecord.builder()
+                .text("curated fact")
+                .pinned(true)
+                .accessCount(3)
+                .build();
+
+        assertTrue(record.isPinned());
+        assertEquals(3, record.getAccessCount());
+
+        // A round-trip through from() must not drop them either
+        MemoryRecord copy = MemoryRecord.builder().from(record).build();
+        assertTrue(copy.isPinned());
+        assertEquals(3, copy.getAccessCount());
+    }
 }

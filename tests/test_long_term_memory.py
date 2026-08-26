@@ -348,6 +348,49 @@ class TestLongTermMemory:
             assert call_kwargs[1]["keepttl"] is True
 
     @pytest.mark.asyncio
+    async def test_extract_memory_structure_does_not_re_append_existing_tags(
+        self, mock_async_redis_client
+    ):
+        """Regression: re-running extraction on a record must not duplicate tags.
+
+        The task is scheduled on every index of a record, so a memory that gets
+        rewritten (overwrite by id, semantic merge, edit) runs extraction again
+        over text it already has tags for. The already-stored tags must be
+        unioned with the fresh ones, not concatenated -- including when the
+        extractor comes back with different casing for the same tag.
+        """
+        with (
+            patch(
+                "agent_memory_server.long_term_memory.get_redis_conn"
+            ) as mock_get_redis,
+            patch(
+                "agent_memory_server.long_term_memory.handle_extraction"
+            ) as mock_extract,
+        ):
+            mock_redis = AsyncMock()
+            mock_get_redis.return_value = mock_redis
+            mock_redis.hsetex.return_value = 2
+            mock_extract.return_value = (
+                ["Books", "literature", "Moby Dick"],
+                ["Moby Dick"],
+            )
+
+            memory = MemoryRecord(
+                id="test-id",
+                text="The user likes Moby Dick.",
+                namespace="test-namespace",
+                memory_type=MemoryTypeEnum.SEMANTIC,
+                topics=["books", "Moby Dick"],
+                entities=["User", "Moby Dick"],
+            )
+
+            await extract_memory_structure(memory)
+
+            mapping = mock_redis.hsetex.call_args[1]["mapping"]
+            assert mapping["topics"] == "books,Moby Dick,literature"
+            assert mapping["entities"] == "User,Moby Dick"
+
+    @pytest.mark.asyncio
     async def test_update_long_term_memory_preserves_decoded_tags_on_text_only_patch(
         self,
     ):
