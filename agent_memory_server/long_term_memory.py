@@ -22,9 +22,11 @@ from agent_memory_server.extraction import (
 )
 from agent_memory_server.filters import (
     CreatedAt,
+    DiscreteMemoryExtracted,
     Entities,
     EventDate,
     ExtractionStrategy,
+    Id,
     LastAccessed,
     MemoryHash,
     MemoryType,
@@ -1520,6 +1522,77 @@ async def search_long_term_memories(
     )
 
     return results
+
+
+async def list_long_term_memories(
+    session_id: SessionId | None = None,
+    user_id: UserId | None = None,
+    namespace: Namespace | None = None,
+    created_at: CreatedAt | None = None,
+    last_accessed: LastAccessed | None = None,
+    topics: Topics | None = None,
+    entities: Entities | None = None,
+    memory_type: MemoryType | None = None,
+    extraction_strategy: ExtractionStrategy | None = None,
+    event_date: EventDate | None = None,
+    memory_hash: MemoryHash | None = None,
+    id: Id | None = None,
+    discrete_memory_extracted: DiscreteMemoryExtracted | None = None,
+    limit: int = 10,
+    offset: int = 0,
+) -> MemoryRecordResults:
+    """Enumerate long-term memories matching filters, without retrieval ranking.
+
+    Use this to enumerate memories for administrative/curation UIs, not for searching
+    memories to give to a model. In runs a _filter-only_ query, without embedding,
+    relevance or recency reranking. Explicitly does _not_ touch `last_accessed` or
+    `access_count`, so paging doesn't change data.
+
+    Results are ordered by id (ULID, stable creation order).
+
+    Args:
+        namespace: Required namespace filter
+        user_id: Optional user ID filter
+        session_id: Optional session ID filter
+        created_at: Optional created at filter
+        last_accessed: Optional last accessed filter
+        topics: Optional topics filter
+        entities: Optional entities filter
+        memory_type: Optional memory type filter
+        extraction_strategy: Optional extraction strategy filter
+        event_date: Optional event date filter
+        memory_hash: Optional memory hash filter
+        id: Optional memory ID filter
+        discrete_memory_extracted: Optional discrete memory extracted filter
+        limit: Maximum number of records to return in this page
+        offset: Offset of the first record to return
+
+    Returns:
+        MemoryRecordResults,
+          - `total` is the number of records matched,
+          - `next_offset` is the offset of the next page, or None on the last page.
+    """
+    db = await get_memory_vector_db()
+
+    return await db.list_memories(
+        session_id=session_id,
+        user_id=user_id,
+        namespace=namespace,
+        created_at=created_at,
+        last_accessed=last_accessed,
+        topics=topics,
+        entities=entities,
+        memory_type=memory_type,
+        extraction_strategy=extraction_strategy,
+        event_date=event_date,
+        memory_hash=memory_hash,
+        id=id,
+        discrete_memory_extracted=discrete_memory_extracted,
+        limit=limit,
+        offset=offset,
+        sort_by="id",
+        ascending=True,
+    )
 
 
 async def count_long_term_memories(

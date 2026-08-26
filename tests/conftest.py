@@ -20,7 +20,10 @@ from agent_memory_server.config import settings
 from agent_memory_server.dependencies import HybridBackgroundTasks
 from agent_memory_server.healthcheck import router as health_router
 from agent_memory_server.llm import LLMClient
-from agent_memory_server.memory_vector_db import MemoryVectorDatabase
+from agent_memory_server.memory_vector_db import (
+    LIST_SORT_FIELDS,
+    MemoryVectorDatabase,
+)
 from agent_memory_server.models import (
     MemoryMessage,
     MemoryRecord,
@@ -817,8 +820,15 @@ class MockMemoryVectorDatabase(MemoryVectorDatabase):
         discrete_memory_extracted: Any = None,
         limit: int = 10,
         offset: int = 0,
+        sort_by: str | None = None,
+        ascending: bool = True,
     ) -> MemoryRecordResults:
         """List memories in the mock store using filters without semantic search."""
+        if sort_by is not None and sort_by not in LIST_SORT_FIELDS:
+            raise ValueError(
+                f"Cannot sort by {sort_by!r}; expected one of "
+                f"{sorted(LIST_SORT_FIELDS)}"
+            )
         results = []
         for memory in list(self.memories.values()):
             # Apply basic filters
@@ -890,6 +900,9 @@ class MockMemoryVectorDatabase(MemoryVectorDatabase):
                 metadata=memory.metadata,
             )
             results.append(result)
+
+        if sort_by is not None:
+            results.sort(key=lambda r: getattr(r, sort_by), reverse=not ascending)
 
         # Apply pagination
         paginated = results[offset : offset + limit]

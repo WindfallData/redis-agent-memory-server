@@ -14,10 +14,13 @@ from ulid import ULID
 
 from agent_memory_server.filters import (
     CreatedAt,
+    DiscreteMemoryExtracted,
     Entities,
     EventDate,
     ExtractionStrategy,
+    Id,
     LastAccessed,
+    MemoryHash,
     MemoryType,
     Namespace,
     SessionId,
@@ -863,6 +866,102 @@ class SearchRequest(BaseModel):
 
         if self.event_date is not None:
             filters["event_date"] = self.event_date
+
+        return filters
+
+
+class ListRequest(BaseModel):
+    """Payload for long-term memory listing."""
+
+    session_id: SessionId | None = Field(
+        default=None,
+        description="Optional session ID to filter by",
+    )
+    namespace: Namespace | None = Field(
+        default=None,
+        description="Optional namespace to filter by",
+    )
+    topics: Topics | None = Field(
+        default=None,
+        description="Optional topics to filter by",
+    )
+    entities: Entities | None = Field(
+        default=None,
+        description="Optional entities to filter by",
+    )
+    user_id: UserId | None = Field(
+        default=None,
+        description="Optional user ID to filter by",
+    )
+    created_at: CreatedAt | None = Field(
+        default=None,
+        description="Optional created at timestamp to filter by",
+    )
+    last_accessed: LastAccessed | None = Field(
+        default=None,
+        description="Optional last accessed timestamp to filter by",
+    )
+    memory_type: MemoryType | None = Field(
+        default=None,
+        description="Optional memory type to filter by",
+    )
+    extraction_strategy: ExtractionStrategy | None = Field(
+        default=None,
+        description="Optional extraction strategy to filter by",
+    )
+    event_date: EventDate | None = Field(
+        default=None,
+        description="Optional event date to filter by (for episodic memories)",
+    )
+    memory_hash: MemoryHash | None = Field(
+        default=None,
+        description="Optional memory hash to filter by",
+    )
+    id: Id | None = Field(
+        default=None,
+        description=(
+            "Optional memory ID to filter by. Accepts multiple values, so this "
+            "doubles as a batch fetch of known ids"
+        ),
+    )
+    discrete_memory_extracted: DiscreteMemoryExtracted | None = Field(
+        default=None,
+        description="Optional discrete memory extracted flag to filter by",
+    )
+    limit: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum number of records to return in this page",
+    )
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="Offset of the first record to return",
+    )
+
+    def get_filters(self):
+        """Get all filter objects as a dictionary"""
+        filters = {}
+
+        for name in (
+            "session_id",
+            "namespace",
+            "topics",
+            "entities",
+            "user_id",
+            "created_at",
+            "last_accessed",
+            "memory_type",
+            "extraction_strategy",
+            "event_date",
+            "memory_hash",
+            "id",
+            "discrete_memory_extracted",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                filters[name] = value
 
         return filters
 

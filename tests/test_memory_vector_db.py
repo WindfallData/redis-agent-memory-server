@@ -1,5 +1,6 @@
 """Tests for the MemoryVectorDatabase abstraction."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +23,18 @@ from agent_memory_server.models import (
     MemoryTypeEnum,
     SearchModeEnum,
 )
+
+
+def _mock_index_returning(docs: list[dict], total: int | None = None) -> MagicMock:
+    """Build a mock index whose `search()` returns a raw Redis-style Result."""
+    result = SimpleNamespace(
+        total=len(docs) if total is None else total,
+        docs=[SimpleNamespace(**doc) for doc in docs],
+    )
+    mock_index = MagicMock()
+    mock_index.exists = AsyncMock(return_value=True)
+    mock_index.search = AsyncMock(return_value=result)
+    return mock_index
 
 
 class MockEmbeddings:
@@ -706,10 +719,8 @@ class TestMemoryVectorDatabase:
     @pytest.mark.asyncio
     async def test_list_memories_does_not_overwrite_dist_with_score(self):
         """Filter-only listings should keep neutral distance semantics."""
-        mock_index = MagicMock()
-        mock_index.exists = AsyncMock(return_value=True)
-        mock_index.query = AsyncMock(
-            return_value=[
+        mock_index = _mock_index_returning(
+            [
                 {
                     "id_": "memory_003",
                     "text": "User prefers tea",
@@ -730,6 +741,78 @@ class TestMemoryVectorDatabase:
         assert results.total == 1
         assert results.memories[0].dist == 0.0
         assert results.memories[0].score is None
+
+    @pytest.mark.asyncio
+    async def test_list_memories_rejects_unknown_sort_field(self):
+        """Only fields in LIST_SORT_FIELDS may reach the Redis query."""
+        mock_index = _mock_index_returning([])
+        db = RedisVLMemoryVectorDatabase(mock_index, MockEmbeddings())
+
+        with pytest.raises(ValueError, match="Cannot sort by"):
+            await db.list_memories(sort_by="text")
+
+        # Rejected before issuing any query
+        mock_index.search.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_list_memories_sort_by_id_maps_to_index_field(self):
+        """sort_by='id' must become SORTBY on the index's `id_` field."""
+        mock_index = _mock_index_returning([])
+        db = RedisVLMemoryVectorDatabase(mock_index, MockEmbeddings())
+
+        await db.list_memories(sort_by="id", limit=5, offset=10)
+
+        query = mock_index.search.await_args.args[0]
+        args = query.get_args()
+        assert "SORTBY" in args
+        assert args[args.index("SORTBY") + 1] == "id_"
+        assert args[args.index("SORTBY") + 2] == "ASC"
+        # Paging is applied server-side, not by over-fetching offset+limit
+        assert args[args.index("LIMIT") + 1 :] == [10, 5]
+
+    @pytest.mark.asyncio
+    async def test_list_memories_descending_sort(self):
+        mock_index = _mock_index_returning([])
+        db = RedisVLMemoryVectorDatabase(mock_index, MockEmbeddings())
+
+        await db.list_memories(sort_by="id", ascending=False)
+
+        args = mock_index.search.await_args.args[0].get_args()
+        assert args[args.index("SORTBY") + 2] == "DESC"
+
+    @pytest.mark.asyncio
+    async def test_list_memories_unsorted_by_default(self):
+        """Existing callers must keep issuing the same unsorted query."""
+        mock_index = _mock_index_returning([])
+        db = RedisVLMemoryVectorDatabase(mock_index, MockEmbeddings())
+
+        await db.list_memories(limit=10)
+
+        args = mock_index.search.await_args.args[0].get_args()
+        assert "SORTBY" not in args
+
+    @pytest.mark.asyncio
+    async def test_list_memories_total_is_corpus_count_not_page_size(self):
+        """`total` reports all matches, not just the returned page."""
+        mock_index = _mock_index_returning([{"id_": "b", "text": "second"}], total=42)
+        db = RedisVLMemoryVectorDatabase(mock_index, MockEmbeddings())
+
+        results = await db.list_memories(limit=1, offset=1)
+
+        assert results.total == 42
+        assert len(results.memories) == 1
+        # 2 of 42 consumed, so there is more to fetch
+        assert results.next_offset == 2
+
+    @pytest.mark.asyncio
+    async def test_list_memories_next_offset_none_on_last_page(self):
+        mock_index = _mock_index_returning([{"id_": "c", "text": "third"}], total=3)
+        db = RedisVLMemoryVectorDatabase(mock_index, MockEmbeddings())
+
+        results = await db.list_memories(limit=1, offset=2)
+
+        assert results.total == 3
+        assert results.next_offset is None
 
     def test_build_redis_schema_explicit_tag_separators(self):
         """Regression test: list-backed TAG fields must explicitly use comma separators."""

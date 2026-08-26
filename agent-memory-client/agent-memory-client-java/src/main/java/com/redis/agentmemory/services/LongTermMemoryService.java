@@ -172,6 +172,76 @@ public class LongTermMemoryService extends BaseService {
     }
 
     /**
+     * List long-term memories matching filters, without relevance ranking.
+     *
+     * @param request List request with filters and paging
+     * @return MemoryRecordResults containing one page of matching memories
+     * @throws MemoryClientException if the request fails
+     */
+    public MemoryRecordResults listLongTermMemories(@NotNull ListRequest request) throws MemoryClientException {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("limit", request.getLimit());
+        payload.put("offset", request.getOffset());
+
+        if (request.getSessionId() != null) {
+            payload.put("session_id", request.getSessionId());
+        }
+        if (request.getUserId() != null) {
+            payload.put("user_id", request.getUserId());
+        }
+        if (request.getNamespace() != null) {
+            payload.put("namespace", request.getNamespace());
+        } else if (defaultNamespace != null) {
+            payload.put("namespace", TagFilter.eq(defaultNamespace));
+        }
+
+        if (request.getTopics() != null) {
+            payload.put("topics", request.getTopics());
+        }
+        if (request.getEntities() != null) {
+            payload.put("entities", request.getEntities());
+        }
+        if (request.getMemoryType() != null) {
+            payload.put("memory_type", request.getMemoryType());
+        }
+        if (request.getExtractionStrategy() != null) {
+            payload.put("extraction_strategy", request.getExtractionStrategy());
+        }
+        if (request.getMemoryHash() != null) {
+            payload.put("memory_hash", request.getMemoryHash());
+        }
+        if (request.getId() != null) {
+            payload.put("id", request.getId());
+        }
+        if (request.getDiscreteMemoryExtracted() != null) {
+            payload.put("discrete_memory_extracted", request.getDiscreteMemoryExtracted());
+        }
+
+        try {
+            String json = objectMapper.writeValueAsString(payload);
+            RequestBody body = RequestBody.create(json, JSON);
+
+            Request httpRequest = new Request.Builder()
+                    .url(baseUrl + "/v1/long-term-memory/list")
+                    .post(body)
+                    .build();
+
+            try (Response response = httpClient.newCall(httpRequest).execute()) {
+                handleHttpError(response);
+
+                ResponseBody responseBody = response.body();
+                if (responseBody == null) {
+                    throw new MemoryClientException("Empty response body");
+                }
+
+                return objectMapper.readValue(responseBody.string(), MemoryRecordResults.class);
+            }
+        } catch (IOException e) {
+            throw new MemoryClientException("Failed to list long-term memories", e);
+        }
+    }
+
+    /**
      * Get a single long-term memory by ID.
      *
      * @param memoryId The memory ID to retrieve
