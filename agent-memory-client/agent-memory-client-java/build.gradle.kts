@@ -1,7 +1,7 @@
 plugins {
     id("java-library")
     id("maven-publish")
-    id("pl.allegro.tech.build.axion-release") version "1.21.1"
+    id("pl.allegro.tech.build.axion-release") version "1.21.3"
 }
 
 // Configure scmVersion BEFORE accessing scmVersion.version
@@ -40,11 +40,11 @@ dependencies {
     api("com.squareup.okhttp3:okhttp:4.12.0")
 
     // JSON Processing
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.16.1")
-    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.16.1")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.2")
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.2")
 
     // ULID generation
-    implementation("com.github.f4b6a3:ulid-creator:5.2.3")
+    implementation("com.github.f4b6a3:ulid-creator:5.2.4")
 
     // Annotations
     compileOnly("org.jetbrains:annotations:24.1.0")
@@ -53,8 +53,8 @@ dependencies {
     testImplementation(platform("org.junit:junit-bom:5.10.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    testImplementation("org.mockito:mockito-core:5.8.0")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.8.0")
+    testImplementation("org.mockito:mockito-core:5.23.0")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 
     // Testcontainers for integration tests
