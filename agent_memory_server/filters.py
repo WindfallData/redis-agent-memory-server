@@ -1,11 +1,18 @@
 from datetime import datetime
 from enum import Enum
+from functools import reduce
+from operator import and_
 from typing import Self
 
 from pydantic import BaseModel
 from pydantic.functional_validators import model_validator
 from redisvl.query.filter import FilterExpression, Num, Tag
 from redisvl.utils.token_escaper import TokenEscaper
+
+
+def _all_of(field: str, values: list[str]) -> FilterExpression:
+    """Match every value: `Tag(field) == values` would render `{a|b}`, an OR."""
+    return reduce(and_, (Tag(field) == value for value in values))
 
 
 class TagFilter(BaseModel):
@@ -54,7 +61,7 @@ class TagFilter(BaseModel):
         if self.any is not None:
             return Tag(self.field) == self.any
         if self.all is not None:
-            return Tag(self.field) == self.all
+            return _all_of(self.field, self.all)
         raise ValueError("No filter provided")
 
 
@@ -113,7 +120,7 @@ class EnumFilter(BaseModel):
         if self.any is not None:
             return Tag(self.field) == self.any
         if self.all is not None:
-            return Tag(self.field) == self.all
+            return _all_of(self.field, self.all)
         raise ValueError("No filter provided")
 
 

@@ -266,11 +266,37 @@ class TestTagFilterValidation:
         with pytest.raises(ValueError, match="any cannot be an empty list"):
             TagFilter(field="test", any=[])
 
-    def test_all_filter_creates_expression(self):
-        """all filter should create a valid FilterExpression."""
+    def test_all_filter_is_an_intersection(self):
+        """all filter should AND one tag match per value, not OR them."""
         filter_obj = TagFilter(field="tags", all=["tag1", "tag2"])
         result = filter_obj.to_filter()
+
         assert isinstance(result, FilterExpression)
+        assert str(result) == "(@tags:{tag1} @tags:{tag2})"
+
+    def test_all_filter_with_three_values_is_an_intersection(self):
+        """all filter should keep ANDing as values are added."""
+        result = TagFilter(field="tags", all=["tag1", "tag2", "tag3"]).to_filter()
+
+        assert str(result) == "((@tags:{tag1} @tags:{tag2}) @tags:{tag3})"
+
+    def test_all_filter_with_single_value(self):
+        """all filter with one value is a plain tag match."""
+        result = TagFilter(field="tags", all=["tag1"]).to_filter()
+
+        assert str(result) == "@tags:{tag1}"
+
+    def test_any_filter_is_a_union(self):
+        """any filter stays an OR, in contrast to all."""
+        result = TagFilter(field="tags", any=["tag1", "tag2"]).to_filter()
+
+        assert str(result) == "@tags:{tag1|tag2}"
+
+    def test_all_filter_escapes_values(self):
+        """all filter should escape special characters in each value."""
+        result = TagFilter(field="tags", all=["a:b", "c-d"]).to_filter()
+
+        assert str(result) == "(@tags:{a\\:b} @tags:{c\\-d})"
 
     def test_no_filter_provided_raises(self):
         """No filter provided should raise ValueError."""
@@ -304,20 +330,24 @@ class TestEnumFilter:
         assert isinstance(result, FilterExpression)
 
     def test_any_filter_with_valid_values(self):
-        """any filter with valid enum values."""
+        """any filter stays an OR, in contrast to all."""
         filter_obj = EnumFilter(
             field="status", enum_class=_SampleEnum, any=["value1", "value2"]
         )
         result = filter_obj.to_filter()
+
         assert isinstance(result, FilterExpression)
+        assert str(result) == "@status:{value1|value2}"
 
     def test_all_filter_with_valid_values(self):
-        """all filter with valid enum values."""
+        """all filter should AND the enum values, not OR them."""
         filter_obj = EnumFilter(
             field="status", enum_class=_SampleEnum, all=["value1", "value2"]
         )
         result = filter_obj.to_filter()
+
         assert isinstance(result, FilterExpression)
+        assert str(result) == "(@status:{value1} @status:{value2})"
 
     def test_eq_with_invalid_value_raises(self):
         """eq with invalid enum value should raise."""
