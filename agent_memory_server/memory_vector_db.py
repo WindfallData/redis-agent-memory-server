@@ -244,6 +244,8 @@ class MemoryVectorDatabase(ABC):
     async def update_memories(self, memories: list[MemoryRecord]) -> int:
         """Update memory records in the database.
 
+        Implementations should not re-embed a record whose `text` is unchanged.
+
         Args:
             memories: List of MemoryRecord objects to update
 
@@ -797,6 +799,18 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
             next_offset=next_offset,
         )
 
+    def _apply_storage_defaults(self, memory: MemoryRecord) -> None:
+        """Fill in the hash and timestamps a record must carry before it is stored."""
+        if not memory.memory_hash:
+            memory.memory_hash = self.generate_memory_hash(memory)
+        now = datetime.now(UTC)
+        if not memory.created_at:
+            memory.created_at = now
+        if not memory.last_accessed:
+            memory.last_accessed = now
+        if not memory.updated_at:
+            memory.updated_at = now
+
     async def add_memories(self, memories: list[MemoryRecord]) -> list[str]:
         """Add memories using RedisVL's index.load()."""
         if not memories:
@@ -807,15 +821,7 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
         try:
             # Prepare memories with defaults
             for memory in memories:
-                if not memory.memory_hash:
-                    memory.memory_hash = self.generate_memory_hash(memory)
-                now = datetime.now(UTC)
-                if not memory.created_at:
-                    memory.created_at = now
-                if not memory.last_accessed:
-                    memory.last_accessed = now
-                if not memory.updated_at:
-                    memory.updated_at = now
+                self._apply_storage_defaults(memory)
 
             # Generate embeddings for all texts
             texts = [memory.text for memory in memories]
@@ -1060,13 +1066,81 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
             logger.error(f"Error deleting memories from Redis: {e}")
             raise
 
+    async def _stored_texts(self, memory_ids: list[str]) -> dict[str, str]:
+        """Read the currently stored `text` per memory id, skipping ids with no record.
+
+        Returns an empty mapping if the read fails, which degrades to re-embedding
+        everything -- the same work the caller would have done anyway.
+        """
+        if not memory_ids:
+            return {}
+
+        from agent_memory_server.utils.keys import Keys
+        from agent_memory_server.utils.redis import get_redis_conn
+
+        try:
+            redis = await get_redis_conn()
+            pipeline = redis.pipeline()
+            for memory_id in memory_ids:
+                pipeline.hget(Keys.memory_key(memory_id), "text")
+            stored = await pipeline.execute()
+        except Exception as e:
+            logger.warning(f"Could not read stored memory texts, re-embedding all: {e}")
+            return {}
+
+        texts: dict[str, str] = {}
+        for memory_id, value in zip(memory_ids, stored, strict=False):
+            if value is None:
+                continue
+            texts[memory_id] = (
+                value.decode("utf-8") if isinstance(value, bytes) else value
+            )
+        return texts
+
+    async def _update_without_reembedding(self, memories: list[MemoryRecord]) -> int:
+        """Rewrite every indexed field except the vector, leaving the embedding as-is."""
+        from agent_memory_server.utils.keys import Keys
+        from agent_memory_server.utils.redis import get_redis_conn
+
+        redis = await get_redis_conn()
+        pipeline = redis.pipeline()
+        for memory in memories:
+            self._apply_storage_defaults(memory)
+            pipeline.hset(
+                Keys.memory_key(memory.id), mapping=self._memory_to_data(memory)
+            )
+        await pipeline.execute()
+        return len(memories)
+
     async def update_memories(self, memories: list[MemoryRecord]) -> int:
-        """Update memory records by re-adding them (HSET overwrites in Redis)."""
+        """Update memory records, re-embedding only the ones whose `text` changed.
+
+        A metadata-only write (toggling `pinned`, marking extraction done) reuses the
+        stored vector: re-embedding costs money and nudges the vector with provider
+        noise for a value that should not be moving.
+        """
         if not memories:
             return 0
 
-        added = await self.add_memories(memories)
-        return len(added)
+        await self._ensure_index()
+
+        stored_texts = await self._stored_texts(
+            [memory.id for memory in memories if memory.id]
+        )
+        unchanged = [
+            memory
+            for memory in memories
+            if memory.id and stored_texts.get(memory.id) == memory.text
+        ]
+        unchanged_ids = {memory.id for memory in unchanged}
+        changed = [memory for memory in memories if memory.id not in unchanged_ids]
+
+        updated = 0
+        if unchanged:
+            updated += await self._update_without_reembedding(unchanged)
+        if changed:
+            updated += len(await self.add_memories(changed))
+        return updated
 
     async def count_memories(
         self,
