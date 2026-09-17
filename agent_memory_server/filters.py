@@ -11,7 +11,7 @@ from redisvl.utils.token_escaper import TokenEscaper
 
 
 def _all_of(field: str, values: list[str]) -> FilterExpression:
-    """Match every value: `Tag(field) == values` would render `{a|b}`, an OR."""
+    """Match every value."""
     return reduce(and_, (Tag(field) == value for value in values))
 
 
