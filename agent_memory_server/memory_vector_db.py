@@ -241,11 +241,15 @@ class MemoryVectorDatabase(ABC):
         pass
 
     @abstractmethod
-    async def update_memories(self, memories: list[MemoryRecord]) -> int:
+    async def update_memories(
+        self, memories: list[MemoryRecord], skip_embedding: bool = False
+    ) -> int:
         """Update memory records in the database.
 
         Args:
             memories: List of MemoryRecord objects to update
+            skip_embedding: Reuse each record's stored vector instead of re-embedding.
+                Callers pass this when `text` is unchanged.
 
         Returns:
             Number of memories updated
@@ -797,6 +801,18 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
             next_offset=next_offset,
         )
 
+    def _apply_storage_defaults(self, memory: MemoryRecord) -> None:
+        """Fill in the hash and timestamps a record must carry before it is stored."""
+        if not memory.memory_hash:
+            memory.memory_hash = self.generate_memory_hash(memory)
+        now = datetime.now(UTC)
+        if not memory.created_at:
+            memory.created_at = now
+        if not memory.last_accessed:
+            memory.last_accessed = now
+        if not memory.updated_at:
+            memory.updated_at = now
+
     async def add_memories(self, memories: list[MemoryRecord]) -> list[str]:
         """Add memories using RedisVL's index.load()."""
         if not memories:
@@ -807,15 +823,7 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
         try:
             # Prepare memories with defaults
             for memory in memories:
-                if not memory.memory_hash:
-                    memory.memory_hash = self.generate_memory_hash(memory)
-                now = datetime.now(UTC)
-                if not memory.created_at:
-                    memory.created_at = now
-                if not memory.last_accessed:
-                    memory.last_accessed = now
-                if not memory.updated_at:
-                    memory.updated_at = now
+                self._apply_storage_defaults(memory)
 
             # Generate embeddings for all texts
             texts = [memory.text for memory in memories]
@@ -1060,13 +1068,30 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
             logger.error(f"Error deleting memories from Redis: {e}")
             raise
 
-    async def update_memories(self, memories: list[MemoryRecord]) -> int:
-        """Update memory records by re-adding them (HSET overwrites in Redis)."""
+    async def update_memories(
+        self, memories: list[MemoryRecord], skip_embedding: bool = False
+    ) -> int:
+        """Update memory records by re-writing them (HSET overwrites in Redis).
+
+        `skip_embedding` reuses each record's stored vector, which callers pass when
+        `text` is unchanged; `load` only writes the fields it is given, so the vector
+        is left alone.
+        """
         if not memories:
             return 0
 
-        added = await self.add_memories(memories)
-        return len(added)
+        if not skip_embedding:
+            return len(await self.add_memories(memories))
+
+        await self._ensure_index()
+
+        for memory in memories:
+            self._apply_storage_defaults(memory)
+
+        await self._index.load(
+            [self._memory_to_data(memory) for memory in memories], id_field="id_"
+        )
+        return len(memories)
 
     async def count_memories(
         self,

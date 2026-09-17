@@ -376,9 +376,10 @@ async def extract_memories_with_strategy(
                 )
                 all_updated_memories.append(updated_memory)
 
-    # Update processed memories
+    # Update processed memories -- only `discrete_memory_extracted` moves, so the
+    # stored vectors still match the text and don't need re-embedding.
     if all_updated_memories:
-        await db.update_memories(all_updated_memories)
+        await db.update_memories(all_updated_memories, skip_embedding=True)
 
     # Index new extracted memories
     if all_new_memories:

@@ -2473,9 +2473,14 @@ async def update_long_term_memory(
     update_dict = update_memory_hash_if_text_changed(existing_memory, base_updates)
     updated_memory = existing_memory.model_copy(update=update_dict)
 
+    # The vector only tracks `text`, so a metadata-only patch (toggling `pinned`, say)
+    # can keep the stored one: re-embedding costs money and nudges the vector with
+    # provider noise for a value that should not be moving.
+    text_unchanged = updated_memory.text == existing_memory.text
+
     # Update in the database
     db = await get_memory_vector_db()
-    await db.update_memories([updated_memory])
+    await db.update_memories([updated_memory], skip_embedding=text_unchanged)
 
     return updated_memory
 
