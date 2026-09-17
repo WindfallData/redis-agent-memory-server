@@ -162,33 +162,59 @@ async def test_metadata_only_update_still_rewrites_indexed_fields(
 
 
 @pytest.mark.asyncio
-async def test_batch_update_embeds_only_the_changed_records(counting_db, embeddings):
-    """Extraction marks whole batches as processed -- only real edits should embed."""
+async def test_skip_embedding_flag_reuses_every_stored_vector(counting_db, embeddings):
+    """Extraction marks whole batches as processed, so the flag has to cover a batch."""
     kept = _record("unchanged one")
     also_kept = _record("unchanged two")
-    edited = _record("about to change")
-    await counting_db.add_memories([kept, also_kept, edited])
+    await counting_db.add_memories([kept, also_kept])
     embeddings.embedded_batches.clear()
 
     count = await counting_db.update_memories(
         [
             kept.model_copy(update={"discrete_memory_extracted": "t"}),
             also_kept.model_copy(update={"discrete_memory_extracted": "t"}),
-            edited.model_copy(update={"text": "changed after all"}),
-        ]
+        ],
+        skip_embedding=True,
     )
 
-    assert count == 3
-    assert embeddings.embedded_batches == [["changed after all"]]
+    assert count == 2
+    assert embeddings.embedded_batches == []
 
 
 @pytest.mark.asyncio
-async def test_unknown_record_is_embedded_and_written(counting_db, embeddings):
-    """Nothing stored means nothing to reuse, so it falls back to a full write."""
-    never_stored = _record("never indexed")
+async def test_update_memories_embeds_by_default(counting_db, embeddings):
+    """Re-embedding stays the default -- a caller has to opt out deliberately."""
+    record = _record("still worth embedding")
+    await counting_db.add_memories([record])
     embeddings.embedded_batches.clear()
 
-    count = await counting_db.update_memories([never_stored])
+    count = await counting_db.update_memories([record])
 
     assert count == 1
-    assert embeddings.embedded_batches == [["never indexed"]]
+    assert embeddings.embedded_batches == [["still worth embedding"]]
+
+
+@pytest.mark.asyncio
+async def test_extraction_marks_processed_without_embedding(
+    counting_db, embeddings, use_test_redis_connection
+):
+    """The extraction sweep only flips a flag, so it must not pay for a re-embed."""
+    from agent_memory_server.long_term_memory import get_long_term_memory_by_id
+
+    record = _record("a claim awaiting extraction")
+    await counting_db.add_memories([record])
+    before = await _stored_vector(use_test_redis_connection, record.id)
+    embeddings.embedded_batches.clear()
+    embeddings.fill = 0.9
+
+    await counting_db.update_memories(
+        [record.model_copy(update={"discrete_memory_extracted": "t"})],
+        skip_embedding=True,
+    )
+
+    assert embeddings.embedded_batches == []
+    assert await _stored_vector(use_test_redis_connection, record.id) == before
+
+    reloaded = await get_long_term_memory_by_id(record.id)
+    assert reloaded is not None
+    assert reloaded.discrete_memory_extracted == "t"

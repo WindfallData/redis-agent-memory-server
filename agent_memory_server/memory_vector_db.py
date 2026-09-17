@@ -241,13 +241,15 @@ class MemoryVectorDatabase(ABC):
         pass
 
     @abstractmethod
-    async def update_memories(self, memories: list[MemoryRecord]) -> int:
+    async def update_memories(
+        self, memories: list[MemoryRecord], skip_embedding: bool = False
+    ) -> int:
         """Update memory records in the database.
-
-        Implementations should not re-embed a record whose `text` is unchanged.
 
         Args:
             memories: List of MemoryRecord objects to update
+            skip_embedding: Reuse each record's stored vector instead of re-embedding.
+                Callers pass this when `text` is unchanged.
 
         Returns:
             Number of memories updated
@@ -1066,81 +1068,30 @@ class RedisVLMemoryVectorDatabase(MemoryVectorDatabase):
             logger.error(f"Error deleting memories from Redis: {e}")
             raise
 
-    async def _stored_texts(self, memory_ids: list[str]) -> dict[str, str]:
-        """Read the currently stored `text` per memory id, skipping ids with no record.
+    async def update_memories(
+        self, memories: list[MemoryRecord], skip_embedding: bool = False
+    ) -> int:
+        """Update memory records by re-writing them (HSET overwrites in Redis).
 
-        Returns an empty mapping if the read fails, which degrades to re-embedding
-        everything -- the same work the caller would have done anyway.
-        """
-        if not memory_ids:
-            return {}
-
-        from agent_memory_server.utils.keys import Keys
-        from agent_memory_server.utils.redis import get_redis_conn
-
-        try:
-            redis = await get_redis_conn()
-            pipeline = redis.pipeline()
-            for memory_id in memory_ids:
-                pipeline.hget(Keys.memory_key(memory_id), "text")
-            stored = await pipeline.execute()
-        except Exception as e:
-            logger.warning(f"Could not read stored memory texts, re-embedding all: {e}")
-            return {}
-
-        texts: dict[str, str] = {}
-        for memory_id, value in zip(memory_ids, stored, strict=False):
-            if value is None:
-                continue
-            texts[memory_id] = (
-                value.decode("utf-8") if isinstance(value, bytes) else value
-            )
-        return texts
-
-    async def _update_without_reembedding(self, memories: list[MemoryRecord]) -> int:
-        """Rewrite every indexed field except the vector, leaving the embedding as-is."""
-        from agent_memory_server.utils.keys import Keys
-        from agent_memory_server.utils.redis import get_redis_conn
-
-        redis = await get_redis_conn()
-        pipeline = redis.pipeline()
-        for memory in memories:
-            self._apply_storage_defaults(memory)
-            pipeline.hset(
-                Keys.memory_key(memory.id), mapping=self._memory_to_data(memory)
-            )
-        await pipeline.execute()
-        return len(memories)
-
-    async def update_memories(self, memories: list[MemoryRecord]) -> int:
-        """Update memory records, re-embedding only the ones whose `text` changed.
-
-        A metadata-only write (toggling `pinned`, marking extraction done) reuses the
-        stored vector: re-embedding costs money and nudges the vector with provider
-        noise for a value that should not be moving.
+        `skip_embedding` reuses each record's stored vector, which callers pass when
+        `text` is unchanged; `load` only writes the fields it is given, so the vector
+        is left alone.
         """
         if not memories:
             return 0
 
+        if not skip_embedding:
+            return len(await self.add_memories(memories))
+
         await self._ensure_index()
 
-        stored_texts = await self._stored_texts(
-            [memory.id for memory in memories if memory.id]
-        )
-        unchanged = [
-            memory
-            for memory in memories
-            if memory.id and stored_texts.get(memory.id) == memory.text
-        ]
-        unchanged_ids = {memory.id for memory in unchanged}
-        changed = [memory for memory in memories if memory.id not in unchanged_ids]
+        for memory in memories:
+            self._apply_storage_defaults(memory)
 
-        updated = 0
-        if unchanged:
-            updated += await self._update_without_reembedding(unchanged)
-        if changed:
-            updated += len(await self.add_memories(changed))
-        return updated
+        await self._index.load(
+            [self._memory_to_data(memory) for memory in memories], id_field="id_"
+        )
+        return len(memories)
 
     async def count_memories(
         self,
