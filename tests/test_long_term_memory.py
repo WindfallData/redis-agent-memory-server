@@ -933,10 +933,9 @@ class TestLongTermMemory:
             mock_update.assert_called_once()
             update_kwargs = mock_update.call_args[1]
             assert update_kwargs["messages"] == []
-            promoted = update_kwargs["memories"]
 
-            # Each pair is (as read, as promoted); the already persisted memory
-            # is not written back at all
+            # Verify the already persisted memory is not written back at all
+            promoted = update_kwargs["memories"]
             assert [before.id for before, _ in promoted] == [
                 "unpersisted-1",
                 "unpersisted-2",

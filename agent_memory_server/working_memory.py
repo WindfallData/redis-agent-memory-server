@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 MIGRATION_STATUS_KEY = "working_memory:migration:complete"
 MIGRATION_REMAINING_KEY = "working_memory:migration:remaining"
 
-# Optimistic-transaction retries for update_working_memory_items before giving up
+# max attempts for update_working_memory_items' CAS before giving up
 ITEM_UPDATE_MAX_ATTEMPTS = 10
 
 
@@ -673,7 +673,7 @@ async def set_working_memory(
 def _item_changes(
     pairs: Sequence[tuple[BaseModel, BaseModel]],
 ) -> dict[str, tuple[dict, dict]]:
-    """Map item id -> (the item as read, the fields the task changed), dropping no-op pairs."""
+    """Map item id -> (item, changes), dropping no-ops."""
     changes = {}
     for before, after in pairs:
         before_json = before.model_dump(mode="json")
@@ -697,17 +697,8 @@ async def update_working_memory_items(
     redis_client: Redis | None = None,
 ) -> int:
     """
-    Apply a background task's changes to individual messages and memories in place.
-
-    Each ``(before, after)`` pair is an item as the task read it and as the task
-    wants it stored. The fields that differ are written only where the stored item
-    with that id is still ``before``; an item a client has since rewritten or
-    removed is left alone. Nothing else in the document is written (``data``,
-    ``context``, other items, the TTL), so a PUT that lands while the task is
-    working is never rolled back, unlike a ``get_working_memory`` ->
-    ``set_working_memory`` round trip.
-
-    Runs as a WATCH/MULTI transaction on the session key, retried on conflict.
+    Apply changes to individual messages and memories for a session, in place.
+    For each ``(before, after)`` pair, the changed fields in ``after`` are written, but only if ``before`` is still the current value.
 
     Returns:
         Number of items updated
@@ -727,6 +718,8 @@ async def update_working_memory_items(
         user_id=user_id,
         namespace=namespace,
     )
+
+    # if the working memory doesn't exist, try to resolve via the search index
     if not await redis_client.exists(key):
         key = await _resolve_working_memory_key_via_index(
             redis_client, session_id, user_id, namespace
@@ -734,36 +727,50 @@ async def update_working_memory_items(
         if not key:
             return 0
 
+    # the transaction watches for writes on key, and retries if it was updated when we try to EXEC
     async with redis_client.pipeline(transaction=True) as pipe:
         for _ in range(ITEM_UPDATE_MAX_ATTEMPTS):
             try:
+                # watch fails the transaction if the key changes while we're working
                 await pipe.watch(key)
+
+                # get the current messages/memories (under the watch so it's covered at the multi/exec)
                 stored = await pipe.json().get(key, "$.messages", "$.memories")
                 if not stored:
-                    # Session deleted or expired since the task read it
+                    # session deleted or expired since the task read it
                     return 0
 
-                writes: list[tuple[str, object]] = []
                 updated = 0
+                writes: list[tuple[str, object]] = []
+
                 for field, (model, changes) in item_types.items():
+                    # iterate through field, updating individual items by id
                     items = (stored.get(f"$.{field}") or [[]])[0] or []
                     for index, raw in enumerate(items):
                         change = changes.get(raw.get("id"))
                         if change is None:
+                            # this item is not in the change set
                             continue
-                        before_json, changed = change
-                        # Normalize through the model, as the task's read did
-                        if model(**raw).model_dump(mode="json") != before_json:
+
+                        before_json, diff = change
+
+                        # parse the raw item, in the same way the caller did, and skip if already changed
+                        raw_json = model(**raw).model_dump(mode="json")
+                        if raw_json != before_json:
                             continue
+
+                        # otherwise, schedule the write
                         writes.extend(
                             (f"$.{field}[{index}].{name}", value)
-                            for name, value in changed.items()
+                            for name, value in diff.items()
                         )
                         updated += 1
 
+                # nothing needed changes, done
                 if not writes:
                     return 0
 
+                # transactionally do our updates, retrying when the key is changed due to the watch above
                 pipe.multi()
                 for path, value in writes:
                     pipe.json().set(key, path, value)

@@ -426,9 +426,8 @@ async def run_delayed_extraction(
             user_id=user_id,
         )
 
-        # Mark the messages we read as extracted, in place. The session may have
-        # been PUT during the LLM call; writing back the copy read above would
-        # roll that write back.
+        # mark the messages we read as extracted
+        # the session may have been PUT during the extraction, so we can't just write it back directly
         await update_working_memory_items(
             session_id=session_id,
             user_id=working_memory.user_id,
@@ -2114,7 +2113,7 @@ async def promote_working_memory_to_long_term(
     2. For message records, runs extraction to generate semantic/episodic memories
     3. Uses id to detect and replace duplicates in long-term memory
     4. Persists the record and stamps it with persisted_at = now()
-    5. Stamps persisted_at on those items in working memory, in place
+    5. Updates persisted_at on those items in working memory
 
     Args:
         session_id: The session ID to promote memories from
@@ -2146,6 +2145,7 @@ async def promote_working_memory_to_long_term(
     logger.info("Promoting memories to long-term storage...")
 
     promoted_count = 0
+
     # (as read, as promoted) pairs, written back item-by-item at the end
     promoted_memories: list[tuple[MemoryRecord, MemoryRecord]] = []
     promoted_messages: list[tuple[MemoryMessage, MemoryMessage]] = []
@@ -2306,9 +2306,7 @@ async def promote_working_memory_to_long_term(
                 deduplicate=True,  # Enable hash and semantic deduplication
             )
 
-    # Stamp the new persisted_at timestamps onto the promoted items only. The
-    # session may have been PUT while we were indexing; writing back the copy
-    # read above would roll that write back.
+    # Update persisted_at on promoted items
     # Note: Extraction now happens asynchronously via trailing-edge debounce
     if promoted_memories or promoted_messages:
         await working_memory.update_working_memory_items(
