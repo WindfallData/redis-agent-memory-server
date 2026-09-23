@@ -41,6 +41,7 @@ from agent_memory_server.llm import LLMClient, optimize_query_for_vector_search
 from agent_memory_server.memory_vector_db_factory import get_memory_vector_db
 from agent_memory_server.models import (
     ExtractedMemoryRecord,
+    MemoryMessage,
     MemoryRecord,
     MemoryRecordResult,
     MemoryRecordResults,
@@ -367,7 +368,7 @@ async def run_delayed_extraction(
     from agent_memory_server.utils.redis import get_redis_conn
     from agent_memory_server.working_memory import (
         get_working_memory,
-        set_working_memory,
+        update_working_memory_items,
     )
 
     redis = await get_redis_conn()
@@ -425,13 +426,17 @@ async def run_delayed_extraction(
             user_id=user_id,
         )
 
-        # Mark all messages as extracted
-        for message in working_memory.messages:
-            message.discrete_memory_extracted = "t"
-
-        # Persist the updated working memory
-        await set_working_memory(
-            working_memory=working_memory,
+        # Mark the messages we read as extracted, in place. The session may have
+        # been PUT during the LLM call; writing back the copy read above would
+        # roll that write back.
+        await update_working_memory_items(
+            session_id=session_id,
+            user_id=working_memory.user_id,
+            namespace=working_memory.namespace,
+            messages=[
+                (message, message.model_copy(update={"discrete_memory_extracted": "t"}))
+                for message in unextracted_messages
+            ],
             redis_client=redis,
         )
 
@@ -2109,7 +2114,7 @@ async def promote_working_memory_to_long_term(
     2. For message records, runs extraction to generate semantic/episodic memories
     3. Uses id to detect and replace duplicates in long-term memory
     4. Persists the record and stamps it with persisted_at = now()
-    5. Updates the working memory session store to reflect new timestamps
+    5. Stamps persisted_at on those items in working memory, in place
 
     Args:
         session_id: The session ID to promote memories from
@@ -2141,7 +2146,9 @@ async def promote_working_memory_to_long_term(
     logger.info("Promoting memories to long-term storage...")
 
     promoted_count = 0
-    updated_memories = []
+    # (as read, as promoted) pairs, written back item-by-item at the end
+    promoted_memories: list[tuple[MemoryRecord, MemoryRecord]] = []
+    promoted_messages: list[tuple[MemoryMessage, MemoryMessage]] = []
 
     # Thread-aware discrete memory extraction with trailing-edge debouncing
     # Instead of extracting immediately, we schedule extraction to run after
@@ -2195,6 +2202,7 @@ async def promote_working_memory_to_long_term(
     for memory in all_memories_to_process:
         if memory.persisted_at is None:
             # This memory needs to be promoted
+            before = memory.model_copy(deep=True)
 
             # Check for id-based duplicates and handle accordingly
             deduped_memory, was_overwrite = await deduplicate_by_id(
@@ -2223,29 +2231,25 @@ async def promote_working_memory_to_long_term(
             )
 
             promoted_count += 1
-            updated_memories.append(current_memory)
+            promoted_memories.append((before, current_memory))
 
             if was_overwrite:
                 logger.info(f"Overwrote existing memory with id {memory.id}")
             else:
                 logger.info(f"Promoted new memory with id {memory.id}")
-        else:
-            # This memory is already persisted, keep as-is
-            updated_memories.append(memory)
 
-    count_persisted_messages = 0
     message_records_to_index = []
 
     # Process unpersisted messages if configured to do so
     if settings.index_all_messages_in_long_term_memory:
-        updated_messages = []
         for msg in current_working_memory.messages:
             if msg.persisted_at is None:
                 # Skip messages with empty or None content
                 if not msg.content or not msg.content.strip():
                     logger.warning(f"Skipping message with empty content: {msg.id}")
-                    updated_messages.append(msg)
                     continue
+
+                before = msg.model_copy(deep=True)
 
                 # Generate ID if not present (backward compatibility)
                 if not msg.id:
@@ -2282,6 +2286,7 @@ async def promote_working_memory_to_long_term(
                 # Update message with persisted_at timestamp
                 msg.persisted_at = current_memory.persisted_at
                 promoted_count += 1
+                promoted_messages.append((before, msg))
 
                 if was_overwrite:
                     logger.info(
@@ -2292,31 +2297,26 @@ async def promote_working_memory_to_long_term(
                         f"Promoted new long-term message memory with ID {msg.id}"
                     )
 
-            updated_messages.append(msg)
-
         # Batch index all new memory records for messages
         # Fix for Issue #110 - this path previously bypassed deduplication
         if message_records_to_index:
-            count_persisted_messages = len(message_records_to_index)
             await index_long_term_memories(
                 message_records_to_index,
                 redis_client=redis,
                 deduplicate=True,  # Enable hash and semantic deduplication
             )
-    else:
-        count_persisted_messages = 0
-        updated_messages = current_working_memory.messages
 
-    # Update working memory with the new persisted_at timestamps
+    # Stamp the new persisted_at timestamps onto the promoted items only. The
+    # session may have been PUT while we were indexing; writing back the copy
+    # read above would roll that write back.
     # Note: Extraction now happens asynchronously via trailing-edge debounce
-    if promoted_count > 0 or count_persisted_messages > 0:
-        updated_working_memory = current_working_memory.model_copy()
-        updated_working_memory.memories = updated_memories
-        updated_working_memory.messages = updated_messages
-        updated_working_memory.updated_at = datetime.now(UTC)
-
-        await working_memory.set_working_memory(
-            working_memory=updated_working_memory,
+    if promoted_memories or promoted_messages:
+        await working_memory.update_working_memory_items(
+            session_id=session_id,
+            user_id=current_working_memory.user_id,
+            namespace=current_working_memory.namespace,
+            messages=promoted_messages,
+            memories=promoted_memories,
             redis_client=redis,
         )
 
