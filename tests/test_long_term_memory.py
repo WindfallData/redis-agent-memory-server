@@ -886,7 +886,9 @@ class TestLongTermMemory:
 
         with (
             patch("agent_memory_server.working_memory.get_working_memory") as mock_get,
-            patch("agent_memory_server.working_memory.set_working_memory") as mock_set,
+            patch(
+                "agent_memory_server.working_memory.update_working_memory_items"
+            ) as mock_update,
             patch(
                 "agent_memory_server.long_term_memory.deduplicate_by_id"
             ) as mock_dedup,
@@ -896,7 +898,7 @@ class TestLongTermMemory:
         ):
             # Setup mocks
             mock_get.return_value = test_working_memory
-            mock_set.return_value = None
+            mock_update.return_value = 2
             mock_dedup.side_effect = [
                 (unpersisted_memory1, False),  # First call - no overwrite
                 (unpersisted_memory2, False),  # Second call - no overwrite
@@ -927,27 +929,20 @@ class TestLongTermMemory:
             # Verify indexing was called for unpersisted memories
             assert mock_index.call_count == 2
 
-            # Verify working memory was updated with new timestamps
-            mock_set.assert_called_once()
-            updated_memory = mock_set.call_args[1]["working_memory"]
+            # Verify only the promoted memories were written back, item by item
+            mock_update.assert_called_once()
+            update_kwargs = mock_update.call_args[1]
+            assert update_kwargs["messages"] == []
 
-            # Check that the unpersisted memories now have persisted_at set
-            unpersisted_memories_updated = [
-                mem
-                for mem in updated_memory.memories
-                if mem.id in ["unpersisted-1", "unpersisted-2"]
+            # Verify the already persisted memory is not written back at all
+            promoted = update_kwargs["memories"]
+            assert [before.id for before, _ in promoted] == [
+                "unpersisted-1",
+                "unpersisted-2",
             ]
-            assert len(unpersisted_memories_updated) == 2
-            for mem in unpersisted_memories_updated:
-                assert mem.persisted_at is not None
-                assert isinstance(mem.persisted_at, datetime)
-
-            # Check that already persisted memory was unchanged
-            persisted_memories = [
-                mem for mem in updated_memory.memories if mem.id == "persisted-id"
-            ]
-            assert len(persisted_memories) == 1
-            assert persisted_memories[0].persisted_at == persisted_memory.persisted_at
+            for before, after in promoted:
+                assert before.persisted_at is None
+                assert isinstance(after.persisted_at, datetime)
 
         # Now test client resubmission scenario
         # Simulate client resubmitting stale state with new memory
@@ -977,7 +972,9 @@ class TestLongTermMemory:
 
         with (
             patch("agent_memory_server.working_memory.get_working_memory") as mock_get2,
-            patch("agent_memory_server.working_memory.set_working_memory") as mock_set2,
+            patch(
+                "agent_memory_server.working_memory.update_working_memory_items"
+            ) as mock_update2,
             patch(
                 "agent_memory_server.long_term_memory.deduplicate_by_id"
             ) as mock_dedup2,
@@ -987,7 +984,7 @@ class TestLongTermMemory:
         ):
             # Setup mocks for resubmission scenario
             mock_get2.return_value = resubmitted_memory
-            mock_set2.return_value = None
+            mock_update2.return_value = 2
             # First call: existing memory found (overwrite)
             # Second call: new memory, no existing (no overwrite)
             mock_dedup2.side_effect = [
@@ -1007,11 +1004,12 @@ class TestLongTermMemory:
             assert promoted_count_2 == 2
 
             # Verify final working memory state
-            mock_set2.assert_called_once()
-            final_memory = mock_set2.call_args[1]["working_memory"]
+            mock_update2.assert_called_once()
+            promoted_2 = mock_update2.call_args[1]["memories"]
 
             # Both memories should have persisted_at set
-            for mem in final_memory.memories:
+            assert len(promoted_2) == 2
+            for _, mem in promoted_2:
                 assert mem.persisted_at is not None
 
             # This demonstrates that:

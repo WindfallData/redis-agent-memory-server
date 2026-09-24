@@ -3,9 +3,12 @@
 import json
 import logging
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
+from pydantic import BaseModel
 from redis.asyncio import Redis
+from redis.exceptions import WatchError
 from redisvl.query import FilterQuery
 from redisvl.query.filter import Tag
 
@@ -25,6 +28,9 @@ logger = logging.getLogger(__name__)
 # Redis keys for migration status (shared across workers, persists across restarts)
 MIGRATION_STATUS_KEY = "working_memory:migration:complete"
 MIGRATION_REMAINING_KEY = "working_memory:migration:remaining"
+
+# max attempts for update_working_memory_items' CAS before giving up
+ITEM_UPDATE_MAX_ATTEMPTS = 10
 
 
 async def check_and_set_migration_status(redis_client: Redis | None = None) -> bool:
@@ -662,6 +668,124 @@ async def set_working_memory(
             f"Error setting working memory for session {working_memory.session_id}: {e}"
         )
         raise
+
+
+def _item_changes(
+    pairs: Sequence[tuple[BaseModel, BaseModel]],
+) -> dict[str, tuple[dict, dict]]:
+    """Map item id -> (item, changes), dropping no-ops."""
+    changes = {}
+    for before, after in pairs:
+        before_json = before.model_dump(mode="json")
+        after_json = after.model_dump(mode="json")
+        changed = {
+            field: value
+            for field, value in after_json.items()
+            if before_json.get(field) != value
+        }
+        if changed:
+            changes[before_json["id"]] = (before_json, changed)
+    return changes
+
+
+async def update_working_memory_items(
+    session_id: str,
+    user_id: str | None = None,
+    namespace: str | None = None,
+    messages: Sequence[tuple[MemoryMessage, MemoryMessage]] = (),
+    memories: Sequence[tuple[MemoryRecord, MemoryRecord]] = (),
+    redis_client: Redis | None = None,
+) -> int:
+    """
+    Apply changes to individual messages and memories for a session, in place.
+    For each ``(before, after)`` pair, the changed fields in ``after`` are written, but only if ``before`` is still the current value.
+
+    Returns:
+        Number of items updated
+    """
+    item_types: dict[str, tuple[type[BaseModel], dict[str, tuple[dict, dict]]]] = {
+        "messages": (MemoryMessage, _item_changes(messages)),
+        "memories": (MemoryRecord, _item_changes(memories)),
+    }
+    if not any(changes for _, changes in item_types.values()):
+        return 0
+
+    if not redis_client:
+        redis_client = await get_redis_conn()
+
+    key = Keys.working_memory_key(
+        session_id=session_id,
+        user_id=user_id,
+        namespace=namespace,
+    )
+
+    # if the working memory doesn't exist, try to resolve via the search index
+    if not await redis_client.exists(key):
+        key = await _resolve_working_memory_key_via_index(
+            redis_client, session_id, user_id, namespace
+        )
+        if not key:
+            return 0
+
+    # the transaction watches for writes on key, and retries if it was updated when we try to EXEC
+    async with redis_client.pipeline(transaction=True) as pipe:
+        for _ in range(ITEM_UPDATE_MAX_ATTEMPTS):
+            try:
+                # watch fails the transaction if the key changes while we're working
+                await pipe.watch(key)
+
+                # get the current messages/memories (under the watch so it's covered at the multi/exec)
+                stored = await pipe.json().get(key, "$.messages", "$.memories")
+                if not stored:
+                    # session deleted or expired since the task read it
+                    return 0
+
+                updated = 0
+                writes: list[tuple[str, object]] = []
+
+                for field, (model, changes) in item_types.items():
+                    # iterate through field, updating individual items by id
+                    items = (stored.get(f"$.{field}") or [[]])[0] or []
+                    for index, raw in enumerate(items):
+                        change = changes.get(raw.get("id"))
+                        if change is None:
+                            # this item is not in the change set
+                            continue
+
+                        before_json, diff = change
+
+                        # parse the raw item, in the same way the caller did, and skip if already changed
+                        raw_json = model(**raw).model_dump(mode="json")
+                        if raw_json != before_json:
+                            continue
+
+                        # otherwise, schedule the write
+                        writes.extend(
+                            (f"$.{field}[{index}].{name}", value)
+                            for name, value in diff.items()
+                        )
+                        updated += 1
+
+                # nothing needed changes, done
+                if not writes:
+                    return 0
+
+                # transactionally do our updates, retrying when the key is changed due to the watch above
+                pipe.multi()
+                for path, value in writes:
+                    pipe.json().set(key, path, value)
+                await pipe.execute()
+                return updated
+            except WatchError:
+                logger.debug(
+                    f"Working memory for session {session_id} changed during item update; retrying"
+                )
+
+    logger.warning(
+        f"Gave up updating working memory items for session {session_id} after "
+        f"{ITEM_UPDATE_MAX_ATTEMPTS} conflicting writes"
+    )
+    return 0
 
 
 async def delete_working_memory(
