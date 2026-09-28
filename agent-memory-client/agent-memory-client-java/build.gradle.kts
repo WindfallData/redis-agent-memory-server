@@ -58,7 +58,7 @@ dependencies {
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 
     // Testcontainers for integration tests
-    testImplementation(platform("org.testcontainers:testcontainers-bom:1.19.3"))
+    testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
     testImplementation("org.testcontainers:testcontainers")
     testImplementation("org.testcontainers:junit-jupiter")
 }
