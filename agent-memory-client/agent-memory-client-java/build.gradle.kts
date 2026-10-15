@@ -37,7 +37,7 @@ repositories {
 dependencies {
     // HTTP Client
     // api so that `Builder.httpClient` callers can avoid version skew
-    api("com.squareup.okhttp3:okhttp:4.12.0")
+    api("com.squareup.okhttp3:okhttp:5.5.0")
 
     // JSON Processing
     implementation("com.fasterxml.jackson.core:jackson-databind:2.16.1")
@@ -55,7 +55,7 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("org.mockito:mockito-core:5.8.0")
     testImplementation("org.mockito:mockito-junit-jupiter:5.8.0")
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
 
     // Testcontainers for integration tests
     testImplementation(platform("org.testcontainers:testcontainers-bom:1.19.3"))
